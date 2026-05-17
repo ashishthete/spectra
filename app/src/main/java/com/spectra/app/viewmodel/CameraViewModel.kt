@@ -644,6 +644,7 @@ class CameraViewModel @Inject constructor(
         _hudState.update { it.copy(timerCountdown = 0) }
     }
 
+    @OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
     private suspend fun capturePhotoInternal() {
         val imageCapture = cameraController.getImageCapture()
         if (imageCapture == null) {
@@ -660,6 +661,36 @@ class CameraViewModel @Inject constructor(
         }
         try {
             val state = _hudState.value
+            val isHdr = state.isHdrActive && !state.isFrontCamera
+            if (isHdr && state.actualShutterSpeedNs > 0 && state.actualIso > 0) {
+                val hdrUri = captureManager.captureHdrBracket(
+                    imageCapture,
+                    baseExposureNs = state.actualShutterSpeedNs,
+                    baseIso = state.actualIso,
+                    applyBracketSettings = { exposureNs, iso ->
+                        cameraController.applyBracketExposure(exposureNs, iso)
+                    },
+                    restoreAutoExposure = {
+                        resetHardwareToAuto()
+                    },
+                    beautyLevel = state.beautyLevel,
+                    style = state.photoStyle,
+                    isFrontCamera = state.isFrontCamera,
+                    faceRects = lastDetectedFaceRects,
+                    isPortraitMode = state.mode == CameraMode.PORT
+                )
+                _hudState.update { it.copy(
+                    lastCapturedUri = hdrUri,
+                    showCaptureFlash = false,
+                    isCapturing = false,
+                    showReview = true,
+                    reviewUri = hdrUri
+                )}
+                _captureInProgress.value = false
+                return
+            }
+
+            // existing captureSmartPhoto call follows (unchanged)
             val result = captureManager.captureSmartPhoto(
                 imageCapture,
                 state.beautyLevel,
