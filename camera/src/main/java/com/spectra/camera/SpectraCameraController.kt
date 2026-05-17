@@ -1,10 +1,14 @@
 package com.spectra.camera
 
+import android.Manifest
+import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
+import android.provider.MediaStore
 import android.util.Log
 import android.util.Size
 import android.view.OrientationEventListener
@@ -18,13 +22,25 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.core.content.PermissionChecker
 import androidx.lifecycle.LifecycleOwner
 import com.spectra.core.model.LensId
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -42,9 +58,14 @@ class SpectraCameraController @Inject constructor(
     private var camera: Camera? = null
     private var imageCapture: ImageCapture? = null
     private var imageAnalysis: ImageAnalysis? = null
+    private var videoCapture: VideoCapture<Recorder>? = null
+    private var activeRecording: Recording? = null
     private var lifecycleOwner: LifecycleOwner? = null
     private var previewView: PreviewView? = null
     private val analysisExecutor = Executors.newSingleThreadExecutor()
+
+    private val _videoEvent = MutableSharedFlow<VideoRecordEvent>(extraBufferCapacity = 1)
+    val videoEvent: SharedFlow<VideoRecordEvent> = _videoEvent.asSharedFlow()
 
     private val _activeLens = MutableStateFlow(LensId.MAIN)
     val activeLens: StateFlow<LensId> = _activeLens.asStateFlow()
@@ -91,7 +112,13 @@ class SpectraCameraController @Inject constructor(
             val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0
             val exposureNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L
             val focusDiopters = result.get(CaptureResult.LENS_FOCUS_DISTANCE) ?: 0f
-            _sensorMetadata.value = SensorMetadata(iso, exposureNs, focusDiopters)
+            val gains = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
+            val ctK = if (gains != null) {
+                val rGain = gains.red
+                val bGain = gains.blue
+                estimateCtFromGains(rGain, bGain)
+            } else 0
+            _sensorMetadata.value = SensorMetadata(iso, exposureNs, focusDiopters, ctK)
         }
     }
 
@@ -118,16 +145,16 @@ class SpectraCameraController @Inject constructor(
 
     fun cycleLens() {
         val steps = listOf(
-            LensId.ULTRAWIDE to 0.6f,
-            LensId.MAIN to 1f,
-            LensId.TELEPHOTO_3X to 3f,
-            LensId.TELEPHOTO_5X to 5f
+            LensId.ULTRAWIDE,
+            LensId.MAIN,
+            LensId.TELEPHOTO_3X,
+            LensId.TELEPHOTO_5X
         )
-        val currentIdx = steps.indexOfFirst { it.first == _activeLens.value }
+        val currentIdx = steps.indexOf(_activeLens.value)
         val nextIdx = (currentIdx + 1) % steps.size
-        val (nextLens, nextZoom) = steps[nextIdx]
+        val nextLens = steps[nextIdx]
         _activeLens.value = nextLens
-        setZoomRatio(nextZoom)
+        bindCamera(nextLens)
     }
 
     fun flipCamera() {
@@ -320,12 +347,15 @@ class SpectraCameraController @Inject constructor(
     fun getCamera(): Camera? = camera
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
-    fun applySettings(settings: com.spectra.core.model.CameraSettings, manual: Boolean = false) {
+    fun applySettings(settings: com.spectra.core.model.CameraSettings, manual: Boolean = false, motionLevel: Int = 0, semiAuto: Boolean = false) {
         val cam = camera ?: return
-        if (manual) {
-            settingsApplier.applyManual(cam, settings)
-        } else {
-            settingsApplier.applyAutoWithHints(cam, settings)
+        when {
+            manual -> settingsApplier.applyManual(cam, settings)
+            semiAuto -> settingsApplier.applySemiAuto(cam, settings)
+            else -> {
+                val currentIso = _sensorMetadata.value.iso
+                settingsApplier.applyAutoWithHints(cam, settings, motionLevel, currentIso)
+            }
         }
     }
 
@@ -335,9 +365,123 @@ class SpectraCameraController @Inject constructor(
         settingsApplier.applyAuto(cam)
     }
 
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    fun bindForVideo() {
+        val provider = cameraProvider ?: return
+        val owner = lifecycleOwner ?: return
+        val view = previewView ?: return
+
+        provider.unbindAll()
+        val rotation = view.display?.rotation ?: Surface.ROTATION_0
+        val lens = _activeLens.value
+        val cameraId = lensManager.getCameraId(lens)
+
+        val cameraSelector = if (cameraId != null) {
+            CameraSelector.Builder()
+                .addCameraFilter { cameras ->
+                    cameras.filter { Camera2CameraInfo.from(it).cameraId == cameraId }
+                }
+                .build()
+        } else {
+            CameraSelector.DEFAULT_BACK_CAMERA
+        }
+
+        val preview = Preview.Builder()
+            .setTargetResolution(Size(1440, 1920))
+            .setTargetRotation(rotation)
+            .build()
+            .also { it.surfaceProvider = view.surfaceProvider }
+
+        val recorder = Recorder.Builder()
+            .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
+            .build()
+        videoCapture = VideoCapture.withOutput(recorder)
+
+        imageCapture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setTargetRotation(rotation)
+            .build()
+
+        val analysisBuilder = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setTargetRotation(rotation)
+
+        Camera2Interop.Extender(analysisBuilder)
+            .setSessionCaptureCallback(metadataCallback)
+
+        imageAnalysis = analysisBuilder.build()
+            .also { it.setAnalyzer(analysisExecutor, frameProvider) }
+
+        try {
+            camera = provider.bindToLifecycle(owner, cameraSelector, preview, videoCapture, imageCapture, imageAnalysis)
+            updateZoomBounds()
+            _isReady.value = true
+            Log.d("SpectraCamera", "bindForVideo: success")
+        } catch (e: Exception) {
+            Log.e("SpectraCamera", "bindForVideo: failed, trying without analysis", e)
+            try {
+                camera = provider.bindToLifecycle(owner, cameraSelector, preview, videoCapture, imageCapture)
+                updateZoomBounds()
+                _isReady.value = true
+            } catch (e2: Exception) {
+                Log.e("SpectraCamera", "bindForVideo: failed completely", e2)
+            }
+        }
+    }
+
+    @androidx.annotation.OptIn(androidx.camera.video.ExperimentalPersistentRecording::class)
+    fun startRecording(): Boolean {
+        val vc = videoCapture ?: return false
+
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "SPECTRA_${System.currentTimeMillis()}")
+            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/Spectra")
+        }
+
+        val outputOptions = MediaStoreOutputOptions.Builder(
+            context.contentResolver,
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        ).setContentValues(contentValues).build()
+
+        val hasAudio = PermissionChecker.checkSelfPermission(
+            context, Manifest.permission.RECORD_AUDIO
+        ) == PermissionChecker.PERMISSION_GRANTED
+
+        val pendingRecording = vc.output
+            .prepareRecording(context, outputOptions)
+            .let { if (hasAudio) it.withAudioEnabled() else it }
+
+        activeRecording = pendingRecording.start(ContextCompat.getMainExecutor(context)) { event ->
+            _videoEvent.tryEmit(event)
+        }
+
+        Log.d("SpectraCamera", "Recording started, audio=$hasAudio")
+        return true
+    }
+
+    fun stopRecording() {
+        activeRecording?.stop()
+        activeRecording = null
+        Log.d("SpectraCamera", "Recording stopped")
+    }
+
+    fun isRecordingActive(): Boolean = activeRecording != null
+
+    fun rebindCamera() {
+        if (_isFrontCamera.value) {
+            bindFrontCamera()
+        } else {
+            bindCamera(_activeLens.value)
+        }
+    }
+
     fun release() {
         orientationListener.disable()
         cameraProvider?.unbindAll()
         _isReady.value = false
     }
+
+    private fun estimateCtFromGains(rGain: Float, bGain: Float): Int =
+        ColorTemperatureEstimator.fromGainRatio(rGain, bGain)
 }

@@ -30,7 +30,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @HiltViewModel
@@ -65,6 +67,12 @@ class CameraViewModel @Inject constructor(
     private var lastFaceFocusY: Float = -1f
     private var lastAppliedSettings: CameraSettings? = null
     private var reviewDismissJob: Job? = null
+    private var hdrFrameCounter = 0
+    private var recordingTimerJob: Job? = null
+    private var lensHintJob: Job? = null
+    private var lastRecommendedLens: LensId? = null
+    private var lastDetectedFaceRects: List<android.graphics.RectF> = emptyList()
+    private var smartCaptureFrames: List<Pair<ByteArray, Int>>? = null
 
     init {
         pipeline.initialize()
@@ -113,7 +121,8 @@ class CameraViewModel @Inject constructor(
                 _hudState.update { it.copy(
                     actualIso = meta.iso,
                     actualShutterSpeedNs = meta.exposureTimeNs,
-                    actualFocusDistance = meta.focusDistanceDiopters
+                    actualFocusDistance = meta.focusDistanceDiopters,
+                    actualColorTemperature = meta.colorTemperatureK
                 )}
             }
         }
@@ -154,13 +163,30 @@ class CameraViewModel @Inject constructor(
                     focusDistanceDiopters = meta.actualFocusDistance,
                     exposureTimeNs = meta.actualShutterSpeedNs,
                     iso = if (meta.actualIso > 0) meta.actualIso else 100,
-                    colorTemperature = 5500
+                    colorTemperature = if (meta.actualColorTemperature > 0) meta.actualColorTemperature else 5500
                 )
+                hdrFrameCounter++
+                if (hdrFrameCounter % 10 == 0) {
+                    val contrast = analyzeContrastFromBitmap(bitmap)
+                    val hdrActive = contrast > 0.15f
+                    if (meta.mode == CameraMode.PRO) {
+                        val hist = com.spectra.app.ui.pro.computeHistogram(bitmap)
+                        _hudState.update { it.copy(isHdrActive = hdrActive, sceneContrast = contrast, histogramData = hist) }
+                    } else {
+                        _hudState.update { it.copy(isHdrActive = hdrActive, sceneContrast = contrast) }
+                    }
+                }
+                if (meta.mode == CameraMode.PRO && (meta.focusPeakingEnabled || meta.zebraEnabled)) {
+                    withContext(Dispatchers.Default) {
+                        computeProOverlays(bitmap, meta.focusPeakingEnabled, meta.zebraEnabled)
+                    }
+                }
             }
         }
 
         viewModelScope.launch {
             pipeline.faceDetector.faceData.collect { faces ->
+                lastDetectedFaceRects = faces.faces.map { it.bounds }
                 _hudState.update { it.copy(
                     faceCount = faces.faceCount,
                     anyoneSmiling = faces.anyoneSmiling,
@@ -213,14 +239,23 @@ class CameraViewModel @Inject constructor(
             pipeline.lensRecommendation.collect { rec ->
                 val active = _hudState.value.activeLens
                 val isFront = _hudState.value.isFrontCamera
-                val hint = if (!isFront && rec.recommended != active && rec.scores.getOrDefault(rec.recommended, 0f) > 0.7f) {
+                val changed = rec.recommended != lastRecommendedLens
+                lastRecommendedLens = rec.recommended
+                val hint = if (!isFront && changed && rec.recommended != active && rec.scores.getOrDefault(rec.recommended, 0f) > 0.85f) {
                     "Try ${rec.recommended.zoomLabel}"
                 } else null
                 _hudState.update { it.copy(
                     recommendedLens = rec.recommended,
                     lensMatchScores = rec.scores,
-                    lensHint = hint
+                    lensHint = if (hint != null) hint else it.lensHint
                 )}
+                if (hint != null) {
+                    lensHintJob?.cancel()
+                    lensHintJob = viewModelScope.launch {
+                        delay(4000)
+                        _hudState.update { it.copy(lensHint = null) }
+                    }
+                }
             }
         }
 
@@ -278,12 +313,36 @@ class CameraViewModel @Inject constructor(
                 }
             }
         }
+
+        viewModelScope.launch {
+            cameraController.videoEvent.collect { event ->
+                when (event) {
+                    is androidx.camera.video.VideoRecordEvent.Finalize -> {
+                        val uri = event.outputResults.outputUri.toString()
+                        _hudState.update { it.copy(isRecording = false, recordingDurationMs = 0L, lastCapturedUri = uri) }
+                        recordingTimerJob?.cancel()
+                        if (event.hasError()) {
+                            _toastMessage.tryEmit("Recording failed")
+                        } else {
+                            _toastMessage.tryEmit("Video saved")
+                        }
+                    }
+                    is androidx.camera.video.VideoRecordEvent.Status -> {
+                        val durationNs = event.recordingStats.recordedDurationNanos
+                        _hudState.update { it.copy(recordingDurationMs = durationNs / 1_000_000) }
+                    }
+                    else -> {}
+                }
+            }
+        }
     }
 
     @OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
     private fun applySettingsToHardware(settings: CameraSettings, manual: Boolean = false) {
         try {
-            cameraController.applySettings(settings, manual)
+            val motionLevel = _hudState.value.motionLevel
+            val semiAuto = _hudState.value.settingsDisplayMode == com.spectra.core.model.SettingsDisplayMode.SMART_AUTO
+            cameraController.applySettings(settings, manual, motionLevel, semiAuto)
         } catch (e: Exception) {
             Log.w("CameraViewModel", "Failed to apply camera settings", e)
         }
@@ -295,6 +354,23 @@ class CameraViewModel @Inject constructor(
             cameraController.resetToAuto()
         } catch (e: Exception) {
             Log.w("CameraViewModel", "Failed to reset camera to auto", e)
+        }
+    }
+
+    fun toggleSettingsDisplayMode() {
+        val current = _hudState.value.settingsDisplayMode
+        if (_hudState.value.mode == CameraMode.PRO) return
+        val next = when (current) {
+            com.spectra.core.model.SettingsDisplayMode.ACTUAL -> com.spectra.core.model.SettingsDisplayMode.SMART_AUTO
+            com.spectra.core.model.SettingsDisplayMode.SMART_AUTO -> com.spectra.core.model.SettingsDisplayMode.ACTUAL
+            com.spectra.core.model.SettingsDisplayMode.MANUAL -> com.spectra.core.model.SettingsDisplayMode.ACTUAL
+        }
+        _hudState.update { it.copy(settingsDisplayMode = next) }
+        if (next == com.spectra.core.model.SettingsDisplayMode.ACTUAL) {
+            resetHardwareToAuto()
+        } else {
+            val settings = _hudState.value.aiRecommendedSettings
+            applySettingsToHardware(settings)
         }
     }
 
@@ -402,9 +478,18 @@ class CameraViewModel @Inject constructor(
     fun flipCamera() { cameraController.flipCamera() }
     fun switchLens(lens: LensId) { cameraController.switchLens(lens) }
 
+    @OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
     fun setMode(mode: CameraMode) {
         val previous = _hudState.value.mode
+        if (previous == CameraMode.VIDEO && _hudState.value.isRecording) {
+            stopRecording()
+        }
         _hudState.update { it.copy(mode = mode, isManualOverride = false) }
+        if (mode == CameraMode.VIDEO && previous != CameraMode.VIDEO) {
+            cameraController.bindForVideo()
+        } else if (mode != CameraMode.VIDEO && previous == CameraMode.VIDEO) {
+            cameraController.rebindCamera()
+        }
         if (mode == CameraMode.PRO && previous != CameraMode.PRO) {
             applySettingsToHardware(_hudState.value.settings, manual = true)
         } else if (mode != CameraMode.PRO && previous == CameraMode.PRO) {
@@ -416,15 +501,36 @@ class CameraViewModel @Inject constructor(
     fun setPreset(preset: CameraPreset) {
         val previous = _hudState.value.preset
         if (preset == CameraPreset.PRO) {
-            _hudState.update { it.copy(preset = preset, mode = CameraMode.PRO, isManualOverride = false) }
-            applySettingsToHardware(_hudState.value.settings, manual = true)
+            val state = _hudState.value
+            val actualSettings = CameraSettings.clamped(
+                iso = if (state.actualIso > 0) state.actualIso else 400,
+                shutterSpeedDenominator = if (state.actualShutterSpeedNs > 0)
+                    (1_000_000_000L / state.actualShutterSpeedNs).toInt().coerceIn(1, 8000) else 60,
+                whiteBalanceKelvin = 5500,
+                exposureCompensation = 0f,
+                focusDistance = 0f
+            )
+            _hudState.update { it.copy(
+                preset = preset,
+                mode = CameraMode.PRO,
+                isManualOverride = false,
+                settings = actualSettings,
+                aiRecommendedSettings = actualSettings,
+                settingsDisplayMode = com.spectra.core.model.SettingsDisplayMode.MANUAL
+            ) }
+            applySettingsToHardware(actualSettings, manual = true)
         } else {
             val mode = when (preset) {
                 CameraPreset.NIGHT -> CameraMode.NIGHT
                 CameraPreset.PORTRAIT, CameraPreset.COUPLE, CameraPreset.SELFIE -> CameraMode.PORT
                 else -> CameraMode.PHOTO
             }
-            _hudState.update { it.copy(preset = preset, mode = mode, isManualOverride = false) }
+            _hudState.update { it.copy(
+                preset = preset,
+                mode = mode,
+                isManualOverride = false,
+                settingsDisplayMode = com.spectra.core.model.SettingsDisplayMode.ACTUAL
+            ) }
             if (previous == CameraPreset.PRO) {
                 resetHardwareToAuto()
             }
@@ -547,24 +653,56 @@ class CameraViewModel @Inject constructor(
         if (_captureInProgress.value) return
 
         _captureInProgress.value = true
-        _hudState.update { it.copy(showCaptureFlash = true) }
+        _hudState.update { it.copy(showCaptureFlash = true, isCapturing = true) }
+        viewModelScope.launch {
+            delay(120)
+            _hudState.update { it.copy(showCaptureFlash = false) }
+        }
         try {
-            val uri = captureManager.capturePhoto(imageCapture, _hudState.value.beautyLevel, _hudState.value.photoStyle, _hudState.value.isFrontCamera)
+            val state = _hudState.value
+            val result = captureManager.captureSmartPhoto(
+                imageCapture,
+                state.beautyLevel,
+                state.photoStyle,
+                state.isFrontCamera,
+                state.isHdrActive,
+                lastDetectedFaceRects
+            )
+
             _hudState.update { it.copy(
-                lastCapturedUri = uri,
+                lastCapturedUri = result.bestOriginalUri,
                 showCaptureFlash = false,
-                showReview = true,
-                reviewUri = uri
+                isCapturing = false,
+                showSmartReview = true,
+                bestOriginalUri = result.bestOriginalUri,
+                aiEnhancedUri = null,
+                isEnhancing = true
             )}
-            reviewDismissJob?.cancel()
-            reviewDismissJob = viewModelScope.launch {
-                delay(3000)
-                dismissReview()
+
+            viewModelScope.launch {
+                try {
+                    val processedUri = captureManager.saveProcessedCopy(
+                        result.bestOriginalUri,
+                        state.beautyLevel,
+                        state.photoStyle,
+                        state.isFrontCamera,
+                        state.isHdrActive,
+                        lastDetectedFaceRects,
+                        isPortraitMode = state.mode == CameraMode.PORT
+                    )
+                    _hudState.update { it.copy(
+                        aiEnhancedUri = processedUri,
+                        isEnhancing = false
+                    )}
+                } catch (e: Exception) {
+                    Log.w("CameraViewModel", "Processed copy failed", e)
+                    _hudState.update { it.copy(isEnhancing = false) }
+                }
             }
         } catch (e: Exception) {
             Log.e("CameraViewModel", "Capture failed", e)
             _toastMessage.tryEmit("Capture failed: ${e.message}")
-            _hudState.update { it.copy(showCaptureFlash = false) }
+            _hudState.update { it.copy(showCaptureFlash = false, isCapturing = false) }
         } finally {
             _captureInProgress.value = false
         }
@@ -573,6 +711,46 @@ class CameraViewModel @Inject constructor(
     fun dismissReview() {
         reviewDismissJob?.cancel()
         _hudState.update { it.copy(showReview = false) }
+    }
+
+    fun dismissSmartReview() {
+        smartCaptureFrames = null
+        _hudState.update { it.copy(
+            showSmartReview = false,
+            bestOriginalUri = null,
+            aiEnhancedUri = null,
+            isEnhancing = false
+        )}
+    }
+
+    fun saveOriginalOnly() {
+        val enhanced = _hudState.value.aiEnhancedUri
+        if (enhanced != null) captureManager.deletePhoto(enhanced)
+        _toastMessage.tryEmit("Original saved")
+        dismissSmartReview()
+    }
+
+    fun saveEnhancedOnly() {
+        val original = _hudState.value.bestOriginalUri
+        if (original != null) captureManager.deletePhoto(original)
+        _hudState.update { it.copy(lastCapturedUri = _hudState.value.aiEnhancedUri) }
+        _toastMessage.tryEmit("Enhanced saved")
+        dismissSmartReview()
+    }
+
+    fun saveBoth() {
+        _toastMessage.tryEmit("Both saved")
+        dismissSmartReview()
+    }
+
+    fun discardSmartCapture() {
+        val original = _hudState.value.bestOriginalUri
+        val enhanced = _hudState.value.aiEnhancedUri
+        if (original != null) captureManager.deletePhoto(original)
+        if (enhanced != null) captureManager.deletePhoto(enhanced)
+        _hudState.update { it.copy(lastCapturedUri = null) }
+        _toastMessage.tryEmit("Photos discarded")
+        dismissSmartReview()
     }
 
     fun deleteReviewPhoto() {
@@ -591,6 +769,137 @@ class CameraViewModel @Inject constructor(
     fun shareReviewPhoto() {
         reviewDismissJob?.cancel()
         _hudState.update { it.copy(showReview = false) }
+    }
+
+    private var recordingStartTimeMs: Long = 0L
+
+    fun startRecording() {
+        if (_hudState.value.isRecording) return
+        val started = cameraController.startRecording()
+        if (started) {
+            recordingStartTimeMs = System.currentTimeMillis()
+            _hudState.update { it.copy(isRecording = true, recordingDurationMs = 0L) }
+            recordingTimerJob = viewModelScope.launch {
+                while (true) {
+                    delay(100)
+                    val elapsed = System.currentTimeMillis() - recordingStartTimeMs
+                    _hudState.update { it.copy(recordingDurationMs = elapsed) }
+                }
+            }
+        } else {
+            _toastMessage.tryEmit("Could not start recording")
+        }
+    }
+
+    fun stopRecording() {
+        recordingTimerJob?.cancel()
+        cameraController.stopRecording()
+    }
+
+    fun toggleRecording() {
+        if (_hudState.value.isRecording) stopRecording() else startRecording()
+    }
+
+    fun toggleFocusPeaking() {
+        _hudState.update { it.copy(focusPeakingEnabled = !it.focusPeakingEnabled) }
+    }
+
+    fun toggleZebra() {
+        _hudState.update { it.copy(zebraEnabled = !it.zebraEnabled) }
+    }
+
+    fun cycleGridMode() {
+        _hudState.update { state ->
+            val modes = com.spectra.core.model.GridMode.entries
+            val nextIdx = (modes.indexOf(state.gridMode) + 1) % modes.size
+            state.copy(gridMode = modes[nextIdx])
+        }
+    }
+
+    fun cycleZebraThreshold() {
+        _hudState.update { state ->
+            val next = when (state.zebraThreshold) {
+                235 -> 243
+                243 -> 250
+                else -> 235
+            }
+            state.copy(zebraThreshold = next)
+        }
+    }
+
+    private fun computeProOverlays(bitmap: android.graphics.Bitmap, peaking: Boolean, zebra: Boolean) {
+        val sampleSize = 2
+        val w = bitmap.width / sampleSize
+        val h = bitmap.height / sampleSize
+        val small = android.graphics.Bitmap.createScaledBitmap(bitmap, w, h, false)
+        val pixels = IntArray(w * h)
+        small.getPixels(pixels, 0, w, 0, 0, w, h)
+        small.recycle()
+
+        val edgeData = if (peaking) {
+            val edges = IntArray(w * h)
+            for (y in 1 until h - 1) {
+                for (x in 1 until w - 1) {
+                    val idx = y * w + x
+                    val c = luminanceVal(pixels[idx])
+                    val t = luminanceVal(pixels[(y - 1) * w + x])
+                    val b = luminanceVal(pixels[(y + 1) * w + x])
+                    val l = luminanceVal(pixels[y * w + (x - 1)])
+                    val r = luminanceVal(pixels[y * w + (x + 1)])
+                    edges[idx] = kotlin.math.abs(4 * c - t - b - l - r)
+                }
+            }
+            edges
+        } else null
+
+        val zebraArr = if (zebra) {
+            val threshold = _hudState.value.zebraThreshold
+            val z = IntArray(w * h)
+            for (i in pixels.indices) {
+                val lum = luminanceVal(pixels[i])
+                z[i] = if (lum > threshold) 1 else 0
+            }
+            z
+        } else null
+
+        _hudState.update { it.copy(
+            focusPeakingData = edgeData,
+            zebraData = zebraArr,
+            analysisWidth = w,
+            analysisHeight = h
+        )}
+    }
+
+    private fun luminanceVal(pixel: Int): Int {
+        val r = (pixel shr 16) and 0xFF
+        val g = (pixel shr 8) and 0xFF
+        val b = pixel and 0xFF
+        return (r * 77 + g * 150 + b * 29) shr 8
+    }
+
+    private fun analyzeContrastFromBitmap(bitmap: android.graphics.Bitmap): Float {
+        val w = bitmap.width
+        val h = bitmap.height
+        val stepX = maxOf(1, w / 32)
+        val stepY = maxOf(1, h / 32)
+        var darkCount = 0
+        var brightCount = 0
+        var total = 0
+        for (y in 0 until h step stepY) {
+            for (x in 0 until w step stepX) {
+                val pixel = bitmap.getPixel(x, y)
+                val lum = (((pixel shr 16) and 0xFF) * 77 +
+                        ((pixel shr 8) and 0xFF) * 150 +
+                        (pixel and 0xFF) * 29) shr 8
+                if (lum < 50) darkCount++
+                if (lum > 200) brightCount++
+                total++
+            }
+        }
+        if (total == 0) return 0f
+        val darkRatio = darkCount / total.toFloat()
+        val brightRatio = brightCount / total.toFloat()
+        return (darkRatio * brightRatio * 100f).coerceIn(0f, 1f)
     }
 
     override fun onCleared() {
