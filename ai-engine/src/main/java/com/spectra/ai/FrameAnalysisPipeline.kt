@@ -2,6 +2,7 @@ package com.spectra.ai
 
 import android.graphics.Bitmap
 import com.spectra.ai.model.*
+import com.spectra.core.model.CameraMode
 import com.spectra.core.model.CameraSettings
 import com.spectra.core.model.LensId
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,7 +17,8 @@ class FrameAnalysisPipeline @Inject constructor(
     private val lightingAnalyzer: LightingAnalyzer,
     private val motionDetector: MotionDetector,
     private val distanceEstimator: DistanceEstimator,
-    private val decisionEngine: DecisionEngine
+    private val decisionEngine: DecisionEngine,
+    private val coachingEngine: CoachingEngine
 ) {
     private val _analysis = MutableStateFlow(SceneAnalysis())
     val analysis: StateFlow<SceneAnalysis> = _analysis.asStateFlow()
@@ -31,6 +33,9 @@ class FrameAnalysisPipeline @Inject constructor(
     )
     val settingsProfile: StateFlow<SettingsProfile> = _settingsProfile.asStateFlow()
 
+    private val _coachingHint = MutableStateFlow<CoachingHint?>(null)
+    val coachingHint: StateFlow<CoachingHint?> = _coachingHint.asStateFlow()
+
     private var initialized = false
 
     fun initialize() {
@@ -41,6 +46,7 @@ class FrameAnalysisPipeline @Inject constructor(
 
     fun analyzeFrame(
         bitmap: Bitmap,
+        mode: CameraMode = CameraMode.PHOTO,
         focusDistanceDiopters: Float = 0f,
         exposureTimeNs: Long = 0L,
         iso: Int = 100,
@@ -66,6 +72,7 @@ class FrameAnalysisPipeline @Inject constructor(
             distanceRange = distance
         )
         _analysis.value = sceneAnalysis
+        _coachingHint.value = coachingEngine.generateCoaching(sceneAnalysis, mode)
 
         if (sceneAnalysis.isStable) {
             _lensRecommendation.value = decisionEngine.recommendLens(sceneAnalysis)
@@ -76,6 +83,7 @@ class FrameAnalysisPipeline @Inject constructor(
     fun release() {
         sceneClassifier.release()
         motionDetector.reset()
+        coachingEngine.reset()
         initialized = false
     }
 }
