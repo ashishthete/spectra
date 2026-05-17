@@ -199,6 +199,28 @@ Photos save directly to the standard Android gallery via MediaStore. No built-in
 | Phase 3 | Composition coaching — overlay guides, arrows, rule-of-thirds alignment, motion + distance analysis. | "It coaches you in real-time" |
 | Phase 4 | Cloud AI integration — Claude Vision for advanced pose/angle coaching. PRO mode with AI ghost values. | "Full SPECTRA experience" |
 
+## Photo Tips & Reference Cards
+
+When the AI detects a scene, the app can show a **reference card** — a sample photo demonstrating what a great version of that shot type looks like, paired with 2-3 actionable tips. This feature helps users learn photography techniques in context.
+
+**How it works:**
+- Bundled reference images (one per scene type) ship with the app (~15 images, ~5MB total)
+- When scene detection stabilizes (same scene for 3+ seconds), a small thumbnail appears in the HUD
+- User taps the thumbnail to expand a full reference card overlay
+- Card shows: reference photo, scene-specific tips (e.g., "Lower your angle for a more dramatic landscape"), and the recommended settings
+
+**Reference card content per scene type:**
+- Landscape: horizon placement, golden hour timing, leading lines
+- Portrait: eye-level framing, background separation, natural light direction
+- Food: overhead vs 45° angle, natural light, props/context
+- Night: stability tips, long exposure technique, light sources
+- Architecture: vertical lines, symmetry, perspective correction
+- Macro: focus stacking, steady hands, diffused light
+- Pet/Animal: eye-level with subject, burst mode, patience tips
+- Action/Sports: panning technique, shutter speed priority, anticipation
+
+**Caching:** Reference images are bundled in the APK assets. Tips text is hardcoded per scene type. No network needed.
+
 ## Out of Scope (v1)
 
 - Video recording

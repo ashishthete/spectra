@@ -25,10 +25,10 @@ android {
 
 dependencies {
     implementation(project(":core"))
-    implementation(libs.camerax.core)
-    implementation(libs.camerax.camera2)
-    implementation(libs.camerax.lifecycle)
-    implementation(libs.camerax.view)
+    api(libs.camerax.core)
+    api(libs.camerax.camera2)
+    api(libs.camerax.lifecycle)
+    api(libs.camerax.view)
     implementation(libs.coroutines.android)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
