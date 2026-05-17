@@ -21,6 +21,10 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    androidResources {
+        noCompress += "tflite"
+    }
 }
 
 dependencies {
@@ -29,10 +33,13 @@ dependencies {
     api(libs.camerax.camera2)
     api(libs.camerax.lifecycle)
     api(libs.camerax.view)
+    api(libs.camerax.video)
     implementation(libs.coroutines.android)
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.lifecycle.runtime)
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
 
     testImplementation(libs.junit)
     testImplementation(libs.truth)
