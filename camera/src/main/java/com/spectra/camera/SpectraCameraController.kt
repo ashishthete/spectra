@@ -366,6 +366,17 @@ class SpectraCameraController @Inject constructor(
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    fun applyBracketExposure(exposureNs: Long, iso: Int) {
+        val cam = camera ?: return
+        val settings = com.spectra.core.model.CameraSettings(
+            iso = iso,
+            shutterSpeedDenominator = if (exposureNs > 0) (1_000_000_000L / exposureNs).toInt().coerceIn(1, 32000) else 125,
+            whiteBalanceKelvin = _sensorMetadata.value.colorTemperatureK.takeIf { it > 0 } ?: 5500
+        )
+        settingsApplier.applyManual(cam, settings)
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
     fun bindForVideo() {
         val provider = cameraProvider ?: return
         val owner = lifecycleOwner ?: return
