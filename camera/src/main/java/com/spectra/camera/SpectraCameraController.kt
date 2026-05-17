@@ -3,15 +3,14 @@ package com.spectra.camera
 import android.content.Context
 import android.view.Surface
 import androidx.camera.camera2.interop.Camera2CameraInfo
-import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.LifecycleOwner
-import com.spectra.core.model.CameraSettings
 import com.spectra.core.model.LensId
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,7 +22,8 @@ import javax.inject.Singleton
 @Singleton
 class SpectraCameraController @Inject constructor(
     @ApplicationContext private val context: Context,
-    val lensManager: LensManager
+    val lensManager: LensManager,
+    val frameProvider: FrameProvider
 ) {
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: Camera? = null
@@ -86,7 +86,12 @@ class SpectraCameraController @Inject constructor(
             .setTargetRotation(Surface.ROTATION_0)
             .build()
 
-        camera = provider.bindToLifecycle(owner, cameraSelector, preview, imageCapture)
+        val imageAnalysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also { it.setAnalyzer({ it.run() }, frameProvider) }
+
+        camera = provider.bindToLifecycle(owner, cameraSelector, preview, imageCapture, imageAnalysis)
         _isReady.value = true
     }
 
