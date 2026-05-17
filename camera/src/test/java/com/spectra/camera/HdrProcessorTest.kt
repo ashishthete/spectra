@@ -5,6 +5,8 @@ import org.junit.Test
 
 class HdrProcessorTest {
 
+    private val processor = HdrProcessor()
+
     @Test
     fun `computeBracketExposures returns 3 values`() {
         val result = HdrProcessor.computeBracketExposures(10_000_000L, 200)
@@ -72,5 +74,65 @@ class HdrProcessorTest {
         val colorful = HdrProcessor.saturationWeight(0.8f, 0.2f, 0.1f)
         val gray = HdrProcessor.saturationWeight(0.5f, 0.5f, 0.5f)
         assertThat(colorful).isGreaterThan(gray)
+    }
+
+    @Test
+    fun `mertensFusion with single frame returns copy`() {
+        val w = 4; val h = 4
+        val pixels = IntArray(w * h) { (0xFF shl 24) or (128 shl 16) or (128 shl 8) or 128 }
+        val result = processor.mertensFusion(listOf(pixels), w, h)
+        assertThat(result).hasLength(w * h)
+        for (i in result.indices) {
+            assertThat(result[i]).isEqualTo(pixels[i])
+        }
+    }
+
+    @Test
+    fun `mertensFusion with empty list returns empty`() {
+        val result = processor.mertensFusion(emptyList(), 0, 0)
+        assertThat(result).hasLength(0)
+    }
+
+    @Test
+    fun `mertensFusion of three frames produces valid pixels`() {
+        val w = 8; val h = 8; val n = w * h
+        val dark = IntArray(n) { (0xFF shl 24) or (30 shl 16) or (30 shl 8) or 30 }
+        val mid = IntArray(n) { (0xFF shl 24) or (128 shl 16) or (128 shl 8) or 128 }
+        val bright = IntArray(n) { (0xFF shl 24) or (240 shl 16) or (240 shl 8) or 240 }
+        val result = processor.mertensFusion(listOf(dark, mid, bright), w, h)
+        assertThat(result).hasLength(n)
+        for (pixel in result) {
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8) and 0xFF
+            val b = pixel and 0xFF
+            assertThat(r).isIn(0..255)
+            assertThat(g).isIn(0..255)
+            assertThat(b).isIn(0..255)
+        }
+    }
+
+    @Test
+    fun `mertensFusion prefers well-exposed mid frame`() {
+        val w = 4; val h = 4; val n = w * h
+        val dark = IntArray(n) { (0xFF shl 24) or (10 shl 16) or (10 shl 8) or 10 }
+        val mid = IntArray(n) { (0xFF shl 24) or (128 shl 16) or (128 shl 8) or 128 }
+        val bright = IntArray(n) { (0xFF shl 24) or (250 shl 16) or (250 shl 8) or 250 }
+        val result = processor.mertensFusion(listOf(dark, mid, bright), w, h)
+        val avgR = result.map { (it shr 16) and 0xFF }.average()
+        assertThat(avgR).isGreaterThan(50.0)
+        assertThat(avgR).isLessThan(200.0)
+    }
+
+    @Test
+    fun `alignFrame with no motion returns same pixels`() {
+        val w = 16; val h = 16; val n = w * h
+        val frame = IntArray(n) { i ->
+            val x = i % w; val y = i / w
+            (0xFF shl 24) or ((x * 16) shl 16) or ((y * 16) shl 8) or 128
+        }
+        val aligned = processor.alignFrame(frame, frame, w, h)
+        for (i in aligned.indices) {
+            assertThat(aligned[i]).isEqualTo(frame[i])
+        }
     }
 }
