@@ -42,7 +42,7 @@ fun StyleSelector(
                 maxLines = 1,
                 modifier = Modifier
                     .clickable { onStyleSelected(style) }
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
             )
         }
     }

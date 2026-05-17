@@ -1,6 +1,7 @@
 package com.spectra.app.ui.viewfinder
 
 import android.content.Intent
+import android.graphics.ColorMatrixColorFilter
 import android.widget.Toast
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
@@ -23,6 +24,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorMatrix
+import android.graphics.ColorMatrix as AndroidColorMatrix
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -32,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.spectra.core.model.PhotoStyle
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.spectra.app.ui.controls.BeautyToggle
@@ -75,11 +79,25 @@ fun ViewfinderScreen(
             .fillMaxSize()
             .background(HudColors.background)
     ) {
+        val previewStyle = hudState.photoStyle
+        val previewFront = hudState.isFrontCamera
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).also { previewView ->
                     previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                     viewModel.cameraController.initialize(lifecycleOwner, previewView)
+                }
+            },
+            update = { previewView ->
+                val matrix = buildPreviewMatrix(previewStyle, previewFront)
+                if (matrix != null) {
+                    val androidMatrix = AndroidColorMatrix(matrix.values)
+                    previewView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+                    previewView.setLayerPaint(android.graphics.Paint().apply {
+                        colorFilter = ColorMatrixColorFilter(androidMatrix)
+                    })
+                } else {
+                    previewView.setLayerPaint(null)
                 }
             },
             modifier = Modifier
@@ -274,4 +292,70 @@ fun ViewfinderScreen(
             onDelete = { viewModel.deleteReviewPhoto() }
         )
     }
+}
+
+private fun buildPreviewMatrix(style: PhotoStyle, isFrontCamera: Boolean): ColorMatrix? {
+    val combined = AndroidColorMatrix()
+
+    // Base enhancement (matches post-processing)
+    val enhance = AndroidColorMatrix(floatArrayOf(
+        1.08f, 0f, 0f, 0f, -10f,
+        0f, 1.08f, 0f, 0f, -10f,
+        0f, 0f, 1.08f, 0f, -10f,
+        0f, 0f, 0f, 1f, 0f
+    ))
+    val satBoost = AndroidColorMatrix().apply { setSaturation(1.1f) }
+    enhance.postConcat(satBoost)
+    combined.postConcat(enhance)
+
+    if (isFrontCamera) {
+        combined.postConcat(AndroidColorMatrix(floatArrayOf(
+            1.05f, 0.02f, 0f, 0f, 10f,
+            0f, 1.03f, 0f, 0f, 6f,
+            0f, 0f, 0.98f, 0f, -2f,
+            0f, 0f, 0f, 1f, 0f
+        )))
+    }
+
+    when (style) {
+        PhotoStyle.VIVID -> {
+            val sat = AndroidColorMatrix().apply { setSaturation(1.4f) }
+            val contrast = AndroidColorMatrix(floatArrayOf(
+                1.15f, 0f, 0f, 0f, -20f, 0f, 1.15f, 0f, 0f, -20f,
+                0f, 0f, 1.15f, 0f, -20f, 0f, 0f, 0f, 1f, 0f
+            ))
+            sat.postConcat(contrast)
+            combined.postConcat(sat)
+        }
+        PhotoStyle.WARM -> {
+            val sat = AndroidColorMatrix().apply { setSaturation(0.95f) }
+            val warm = AndroidColorMatrix(floatArrayOf(
+                1.08f, 0.05f, 0f, 0f, 8f, 0f, 1.02f, 0f, 0f, 4f,
+                0f, 0f, 0.92f, 0f, -5f, 0f, 0f, 0f, 1f, 0f
+            ))
+            sat.postConcat(warm)
+            combined.postConcat(sat)
+        }
+        PhotoStyle.FILM -> {
+            val sat = AndroidColorMatrix().apply { setSaturation(0.7f) }
+            val lifted = AndroidColorMatrix(floatArrayOf(
+                0.95f, 0.05f, 0.02f, 0f, 12f, 0.02f, 0.95f, 0.03f, 0f, 10f,
+                0.03f, 0.03f, 0.90f, 0f, 18f, 0f, 0f, 0f, 1f, 0f
+            ))
+            sat.postConcat(lifted)
+            combined.postConcat(sat)
+        }
+        PhotoStyle.CINEMATIC -> {
+            val sat = AndroidColorMatrix().apply { setSaturation(0.85f) }
+            val tealOrange = AndroidColorMatrix(floatArrayOf(
+                1.1f, 0f, -0.05f, 0f, 5f, -0.02f, 1.0f, 0.05f, 0f, -3f,
+                -0.05f, 0.05f, 1.12f, 0f, -8f, 0f, 0f, 0f, 1f, 0f
+            ))
+            sat.postConcat(tealOrange)
+            combined.postConcat(sat)
+        }
+        PhotoStyle.NATURAL -> { }
+    }
+
+    return ColorMatrix(combined.array)
 }
