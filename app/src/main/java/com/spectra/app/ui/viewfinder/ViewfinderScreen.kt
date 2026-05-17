@@ -19,6 +19,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.spectra.app.ui.controls.CaptureControls
 import com.spectra.app.ui.controls.ModeSelector
+import com.spectra.app.ui.pro.ProModePanel
+import com.spectra.core.model.CameraMode
 import com.spectra.app.ui.hud.HudOverlay
 import com.spectra.app.ui.theme.HudColors
 import com.spectra.app.ui.tips.ReferenceCard
@@ -65,6 +67,22 @@ fun ViewfinderScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 96.dp)
+        )
+
+        ProModePanel(
+            isVisible = hudState.mode == CameraMode.PRO,
+            settings = hudState.settings,
+            aiSettings = hudState.aiRecommendedSettings,
+            isManualOverride = hudState.isManualOverride,
+            onIsoChange = { viewModel.updateProSetting(iso = it) },
+            onShutterChange = { viewModel.updateProSetting(shutterSpeedDenominator = it) },
+            onWbChange = { viewModel.updateProSetting(whiteBalanceKelvin = it) },
+            onEvChange = { viewModel.updateProSetting(exposureCompensation = it) },
+            onFocusChange = { viewModel.updateProSetting(focusDistance = it) },
+            onSnapToAi = { viewModel.snapToAiRecommendation() },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 130.dp)
         )
 
         CaptureControls(
