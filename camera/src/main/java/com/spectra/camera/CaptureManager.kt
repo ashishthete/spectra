@@ -212,6 +212,20 @@ class CaptureManager @Inject constructor(
             val result = original.copy(Bitmap.Config.ARGB_8888, true)
             val canvas = Canvas(result)
 
+            // Adaptive enhancement: subtle contrast + saturation boost (all photos)
+            val enhancePaint = Paint().apply {
+                val contrast = ColorMatrix(floatArrayOf(
+                    1.08f, 0f, 0f, 0f, -10f,
+                    0f, 1.08f, 0f, 0f, -10f,
+                    0f, 0f, 1.08f, 0f, -10f,
+                    0f, 0f, 0f, 1f, 0f
+                ))
+                val saturation = ColorMatrix().apply { setSaturation(1.1f) }
+                contrast.postConcat(saturation)
+                colorFilter = ColorMatrixColorFilter(contrast)
+            }
+            canvas.drawBitmap(result, 0f, 0f, enhancePaint)
+
             // Front camera: warm/brighten skin tones to match Samsung quality
             if (isFrontCamera) {
                 val warmPaint = Paint().apply {
