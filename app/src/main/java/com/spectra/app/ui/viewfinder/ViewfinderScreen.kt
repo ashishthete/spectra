@@ -21,6 +21,7 @@ import com.spectra.app.ui.controls.CaptureControls
 import com.spectra.app.ui.controls.ModeSelector
 import com.spectra.app.ui.hud.HudOverlay
 import com.spectra.app.ui.theme.HudColors
+import com.spectra.app.ui.tips.ReferenceCard
 import com.spectra.app.viewmodel.CameraViewModel
 
 @Composable
@@ -28,6 +29,7 @@ fun ViewfinderScreen(
     viewModel: CameraViewModel = hiltViewModel()
 ) {
     val hudState by viewModel.hudState.collectAsState()
+    val currentTip by viewModel.currentTip.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
 
@@ -53,7 +55,8 @@ fun ViewfinderScreen(
 
         HudOverlay(
             state = hudState,
-            onCoachingDismiss = { }
+            onCoachingDismiss = { },
+            onTipsClick = { viewModel.showReferenceCard() }
         )
 
         ModeSelector(
@@ -74,5 +77,14 @@ fun ViewfinderScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 24.dp)
         )
+
+        val tip = currentTip
+        if (tip != null) {
+            ReferenceCard(
+                tip = tip,
+                isVisible = hudState.showReferenceCard,
+                onDismiss = { viewModel.dismissReferenceCard() }
+            )
+        }
     }
 }

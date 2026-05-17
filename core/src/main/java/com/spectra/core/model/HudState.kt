@@ -15,5 +15,7 @@ data class HudState(
         if (it == activeLens) 1.0f else 0f
     },
     val isBurstActive: Boolean = false,
-    val lastCapturedUri: String? = null
+    val lastCapturedUri: String? = null,
+    val showTipsThumbnail: Boolean = false,
+    val showReferenceCard: Boolean = false
 )

@@ -45,6 +45,7 @@ android {
 dependencies {
     implementation(project(":core"))
     implementation(project(":camera"))
+    implementation(project(":ai-engine"))
 
     implementation(libs.core.ktx)
     implementation(libs.lifecycle.runtime)

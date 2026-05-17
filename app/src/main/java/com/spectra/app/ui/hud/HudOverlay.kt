@@ -10,12 +10,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.spectra.app.ui.tips.TipsThumbnail
 import com.spectra.core.model.HudState
 
 @Composable
 fun HudOverlay(
     state: HudState,
     onCoachingDismiss: () -> Unit,
+    onTipsClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -73,6 +75,15 @@ fun HudOverlay(
                             .padding(bottom = 180.dp)
                     )
                 }
+
+                TipsThumbnail(
+                    sceneLabel = state.sceneLabel,
+                    isVisible = state.showTipsThumbnail,
+                    onClick = onTipsClick,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 24.dp, bottom = 180.dp)
+                )
             }
         }
     }
