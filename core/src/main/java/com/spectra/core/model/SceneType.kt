@@ -11,5 +11,5 @@ enum class SceneType(val label: String) {
     ACTION("ACTION"),
     DOCUMENT("DOCUMENT"),
     INDOOR("INDOOR"),
-    UNKNOWN("ANALYZING...");
+    UNKNOWN("READY");
 }
