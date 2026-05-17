@@ -23,5 +23,6 @@ data class HudState(
     val cloudCoachingArrow: String = "NONE",
     val aiRecommendedSettings: CameraSettings = CameraSettings(),
     val isManualOverride: Boolean = false,
-    val isFrontCamera: Boolean = false
+    val isFrontCamera: Boolean = false,
+    val beautyLevel: Int = 0  // 0=off, 1=low, 2=medium, 3=high
 )

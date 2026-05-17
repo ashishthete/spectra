@@ -152,6 +152,13 @@ class CameraViewModel @Inject constructor(
         return System.currentTimeMillis() - stableSceneStartMs >= 3000L
     }
 
+    fun cycleBeauty() {
+        _hudState.update { state ->
+            val next = (state.beautyLevel + 1) % 4
+            state.copy(beautyLevel = next)
+        }
+    }
+
     fun cycleLens() { cameraController.cycleLens() }
     fun flipCamera() { cameraController.flipCamera() }
     fun switchLens(lens: LensId) { cameraController.switchLens(lens) }

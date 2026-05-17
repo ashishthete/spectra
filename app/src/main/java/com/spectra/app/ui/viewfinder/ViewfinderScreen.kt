@@ -24,6 +24,8 @@ import com.spectra.app.ui.controls.CaptureControls
 import com.spectra.app.ui.controls.ModeSelector
 import com.spectra.app.ui.pro.ProModePanel
 import com.spectra.core.model.CameraMode
+import com.spectra.app.ui.controls.BeautyToggle
+import com.spectra.app.ui.hud.BeautyOverlay
 import com.spectra.app.ui.hud.HudOverlay
 import com.spectra.app.ui.theme.HudColors
 import com.spectra.app.ui.tips.ReferenceCard
@@ -58,10 +60,23 @@ fun ViewfinderScreen(
             modifier = Modifier.fillMaxSize()
         )
 
+        BeautyOverlay(
+            beautyLevel = hudState.beautyLevel
+        )
+
         HudOverlay(
             state = hudState,
             onCoachingDismiss = { },
             onTipsClick = { viewModel.showReferenceCard() }
+        )
+
+        BeautyToggle(
+            beautyLevel = hudState.beautyLevel,
+            isVisible = hudState.isFrontCamera,
+            onToggle = { viewModel.cycleBeauty() },
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 24.dp, top = 60.dp)
         )
 
         ModeSelector(
