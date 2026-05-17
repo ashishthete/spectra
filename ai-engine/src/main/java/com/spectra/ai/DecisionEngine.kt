@@ -77,50 +77,285 @@ class DecisionEngine @Inject constructor() {
     fun optimizeSettings(analysis: SceneAnalysis): SettingsProfile {
         val baseSettings = getBaseSettings(analysis.sceneType, analysis.lighting)
         val adjusted = adjustForMotion(baseSettings, analysis.motionLevel)
+        val distanceAdjusted = adjustForDistance(adjusted, analysis.distanceRange)
 
         val reason = "${analysis.sceneType.label} · ${analysis.lighting.label}"
-        return SettingsProfile(adjusted, reason)
+        return SettingsProfile(distanceAdjusted, reason)
     }
 
     private fun getBaseSettings(scene: SceneType, lighting: LightingCondition): CameraSettings {
         return when (scene) {
-            SceneType.LANDSCAPE -> when (lighting) {
-                LightingCondition.GOLDEN_HOUR -> CameraSettings(iso = 100, shutterSpeedDenominator = 250, whiteBalanceKelvin = 5500, exposureCompensation = 0.3f)
-                LightingCondition.HARSH_MIDDAY -> CameraSettings(iso = 100, shutterSpeedDenominator = 1000, whiteBalanceKelvin = 5200)
-                LightingCondition.OVERCAST -> CameraSettings(iso = 200, shutterSpeedDenominator = 250, whiteBalanceKelvin = 6500)
-                LightingCondition.LOW_LIGHT -> CameraSettings(iso = 800, shutterSpeedDenominator = 30, whiteBalanceKelvin = 4000)
-                else -> CameraSettings(iso = 100, shutterSpeedDenominator = 250, whiteBalanceKelvin = 5500)
-            }
-            SceneType.PORTRAIT -> when (lighting) {
-                LightingCondition.BRIGHT_DAYLIGHT -> CameraSettings(iso = 100, shutterSpeedDenominator = 250, whiteBalanceKelvin = 5500)
-                LightingCondition.GOLDEN_HOUR -> CameraSettings(iso = 100, shutterSpeedDenominator = 200, whiteBalanceKelvin = 5200, exposureCompensation = 0.3f)
-                LightingCondition.LOW_LIGHT -> CameraSettings(iso = 400, shutterSpeedDenominator = 60, whiteBalanceKelvin = 4500)
-                LightingCondition.ARTIFICIAL -> CameraSettings(iso = 400, shutterSpeedDenominator = 125, whiteBalanceKelvin = 4000)
-                else -> CameraSettings(iso = 200, shutterSpeedDenominator = 125, whiteBalanceKelvin = 5500)
-            }
-            SceneType.FOOD -> CameraSettings(iso = 200, shutterSpeedDenominator = 125, whiteBalanceKelvin = 4500, exposureCompensation = 0.3f)
-            SceneType.NIGHT -> CameraSettings(iso = 1600, shutterSpeedDenominator = 15, whiteBalanceKelvin = 4000)
-            SceneType.MACRO -> CameraSettings(iso = 200, shutterSpeedDenominator = 250, whiteBalanceKelvin = 5500)
-            SceneType.ARCHITECTURE -> CameraSettings(iso = 100, shutterSpeedDenominator = 250, whiteBalanceKelvin = 5500)
-            SceneType.PET, SceneType.ACTION -> CameraSettings(iso = 400, shutterSpeedDenominator = 500, whiteBalanceKelvin = 5500)
-            else -> CameraSettings()
+            SceneType.LANDSCAPE -> landscapeSettings(lighting)
+            SceneType.PORTRAIT -> portraitSettings(lighting)
+            SceneType.FOOD -> foodSettings(lighting)
+            SceneType.NIGHT -> nightSettings(lighting)
+            SceneType.MACRO -> macroSettings(lighting)
+            SceneType.ARCHITECTURE -> architectureSettings(lighting)
+            SceneType.PET -> petSettings(lighting)
+            SceneType.ACTION -> actionSettings(lighting)
+            SceneType.DOCUMENT -> documentSettings(lighting)
+            SceneType.INDOOR -> indoorSettings(lighting)
+            else -> autoSettings(lighting)
         }
+    }
+
+    private fun landscapeSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.GOLDEN_HOUR -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 200,
+            whiteBalanceKelvin = 5800, exposureCompensation = 0.3f
+        )
+        LightingCondition.BLUE_HOUR -> CameraSettings(
+            iso = 200, shutterSpeedDenominator = 60,
+            whiteBalanceKelvin = 7500, exposureCompensation = 0.3f
+        )
+        LightingCondition.BRIGHT_DAYLIGHT -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 500,
+            whiteBalanceKelvin = 5200, exposureCompensation = 0f
+        )
+        LightingCondition.HARSH_MIDDAY -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 1000,
+            whiteBalanceKelvin = 5000, exposureCompensation = -0.3f
+        )
+        LightingCondition.OVERCAST -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 6200, exposureCompensation = 0f
+        )
+        LightingCondition.LOW_LIGHT -> CameraSettings(
+            iso = 800, shutterSpeedDenominator = 30,
+            whiteBalanceKelvin = 4000, exposureCompensation = 0f
+        )
+        LightingCondition.BACKLIT -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 320,
+            whiteBalanceKelvin = 5500, exposureCompensation = 1.0f
+        )
+        else -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0f
+        )
+    }
+
+    private fun portraitSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.BRIGHT_DAYLIGHT -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 320,
+            whiteBalanceKelvin = 5300, exposureCompensation = 0.3f
+        )
+        LightingCondition.GOLDEN_HOUR -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 200,
+            whiteBalanceKelvin = 5000, exposureCompensation = 0.3f
+        )
+        LightingCondition.OVERCAST -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 160,
+            whiteBalanceKelvin = 6200, exposureCompensation = 0.3f
+        )
+        LightingCondition.LOW_LIGHT -> CameraSettings(
+            iso = 400, shutterSpeedDenominator = 60,
+            whiteBalanceKelvin = 4200, exposureCompensation = 0.3f
+        )
+        LightingCondition.ARTIFICIAL -> CameraSettings(
+            iso = 200, shutterSpeedDenominator = 125,
+            whiteBalanceKelvin = 3800, exposureCompensation = 0.3f
+        )
+        LightingCondition.STUDIO -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 160,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0f
+        )
+        LightingCondition.BACKLIT -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 5500, exposureCompensation = 1.0f
+        )
+        LightingCondition.HARSH_MIDDAY -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 500,
+            whiteBalanceKelvin = 5200, exposureCompensation = 0.3f
+        )
+        else -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 160,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0.3f
+        )
+    }
+
+    private fun foodSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.BRIGHT_DAYLIGHT, LightingCondition.GOLDEN_HOUR -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 200,
+            whiteBalanceKelvin = 5000, exposureCompensation = 0.7f
+        )
+        LightingCondition.OVERCAST -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 125,
+            whiteBalanceKelvin = 5800, exposureCompensation = 0.3f
+        )
+        LightingCondition.ARTIFICIAL -> CameraSettings(
+            iso = 200, shutterSpeedDenominator = 100,
+            whiteBalanceKelvin = 3800, exposureCompensation = 0.3f
+        )
+        LightingCondition.LOW_LIGHT -> CameraSettings(
+            iso = 400, shutterSpeedDenominator = 60,
+            whiteBalanceKelvin = 4000, exposureCompensation = 0.3f
+        )
+        else -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 125,
+            whiteBalanceKelvin = 4800, exposureCompensation = 0.3f
+        )
+    }
+
+    private fun nightSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.ARTIFICIAL -> CameraSettings(
+            iso = 800, shutterSpeedDenominator = 30,
+            whiteBalanceKelvin = 3500, exposureCompensation = 0.3f
+        )
+        else -> CameraSettings(
+            iso = 1600, shutterSpeedDenominator = 15,
+            whiteBalanceKelvin = 3800, exposureCompensation = 0f
+        )
+    }
+
+    private fun macroSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.BRIGHT_DAYLIGHT, LightingCondition.HARSH_MIDDAY -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 500,
+            whiteBalanceKelvin = 5200, exposureCompensation = 0f,
+            focusDistance = 0.1f
+        )
+        LightingCondition.LOW_LIGHT -> CameraSettings(
+            iso = 400, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 4500, exposureCompensation = 0.3f,
+            focusDistance = 0.1f
+        )
+        else -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 320,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0f,
+            focusDistance = 0.1f
+        )
+    }
+
+    private fun architectureSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.BRIGHT_DAYLIGHT -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 500,
+            whiteBalanceKelvin = 5200, exposureCompensation = 0f
+        )
+        LightingCondition.GOLDEN_HOUR -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0.3f
+        )
+        LightingCondition.BLUE_HOUR -> CameraSettings(
+            iso = 400, shutterSpeedDenominator = 60,
+            whiteBalanceKelvin = 7000, exposureCompensation = 0f
+        )
+        LightingCondition.LOW_LIGHT, LightingCondition.ARTIFICIAL -> CameraSettings(
+            iso = 400, shutterSpeedDenominator = 60,
+            whiteBalanceKelvin = 4500, exposureCompensation = 0f
+        )
+        else -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0f
+        )
+    }
+
+    private fun petSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.BRIGHT_DAYLIGHT, LightingCondition.HARSH_MIDDAY -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 1000,
+            whiteBalanceKelvin = 5300, exposureCompensation = 0f
+        )
+        LightingCondition.LOW_LIGHT -> CameraSettings(
+            iso = 800, shutterSpeedDenominator = 500,
+            whiteBalanceKelvin = 4500, exposureCompensation = 0.3f
+        )
+        LightingCondition.ARTIFICIAL -> CameraSettings(
+            iso = 400, shutterSpeedDenominator = 500,
+            whiteBalanceKelvin = 4000, exposureCompensation = 0f
+        )
+        else -> CameraSettings(
+            iso = 200, shutterSpeedDenominator = 800,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0f
+        )
+    }
+
+    private fun actionSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.BRIGHT_DAYLIGHT, LightingCondition.HARSH_MIDDAY -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 2000,
+            whiteBalanceKelvin = 5200, exposureCompensation = 0f
+        )
+        LightingCondition.LOW_LIGHT -> CameraSettings(
+            iso = 1600, shutterSpeedDenominator = 500,
+            whiteBalanceKelvin = 4500, exposureCompensation = 0.3f
+        )
+        else -> CameraSettings(
+            iso = 400, shutterSpeedDenominator = 1000,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0f
+        )
+    }
+
+    private fun documentSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.BRIGHT_DAYLIGHT -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0.3f
+        )
+        LightingCondition.ARTIFICIAL -> CameraSettings(
+            iso = 200, shutterSpeedDenominator = 125,
+            whiteBalanceKelvin = 4200, exposureCompensation = 0.3f
+        )
+        else -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 160,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0.3f
+        )
+    }
+
+    private fun indoorSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.ARTIFICIAL -> CameraSettings(
+            iso = 200, shutterSpeedDenominator = 125,
+            whiteBalanceKelvin = 3800, exposureCompensation = 0f
+        )
+        LightingCondition.LOW_LIGHT -> CameraSettings(
+            iso = 800, shutterSpeedDenominator = 60,
+            whiteBalanceKelvin = 4000, exposureCompensation = 0.3f
+        )
+        LightingCondition.BRIGHT_DAYLIGHT -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 200,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0f
+        )
+        else -> CameraSettings(
+            iso = 200, shutterSpeedDenominator = 125,
+            whiteBalanceKelvin = 4800, exposureCompensation = 0f
+        )
+    }
+
+    private fun autoSettings(lighting: LightingCondition) = when (lighting) {
+        LightingCondition.BRIGHT_DAYLIGHT -> CameraSettings(
+            iso = 50, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 5300, exposureCompensation = 0f
+        )
+        LightingCondition.LOW_LIGHT -> CameraSettings(
+            iso = 800, shutterSpeedDenominator = 60,
+            whiteBalanceKelvin = 4200, exposureCompensation = 0f
+        )
+        LightingCondition.GOLDEN_HOUR -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 200,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0.3f
+        )
+        else -> CameraSettings(iso = 100, shutterSpeedDenominator = 125, whiteBalanceKelvin = 5500)
     }
 
     private fun adjustForMotion(settings: CameraSettings, motion: MotionLevel): CameraSettings {
         return when (motion) {
-            MotionLevel.FAST, MotionLevel.VERY_FAST -> CameraSettings(
+            MotionLevel.FAST, MotionLevel.VERY_FAST -> CameraSettings.clamped(
                 iso = maxOf(settings.iso, 800),
                 shutterSpeedDenominator = maxOf(settings.shutterSpeedDenominator, 1000),
                 whiteBalanceKelvin = settings.whiteBalanceKelvin,
-                exposureCompensation = settings.exposureCompensation
+                exposureCompensation = settings.exposureCompensation,
+                focusDistance = settings.focusDistance
             )
-            MotionLevel.MODERATE -> CameraSettings(
+            MotionLevel.MODERATE -> CameraSettings.clamped(
                 iso = maxOf(settings.iso, 400),
                 shutterSpeedDenominator = maxOf(settings.shutterSpeedDenominator, 500),
                 whiteBalanceKelvin = settings.whiteBalanceKelvin,
-                exposureCompensation = settings.exposureCompensation
+                exposureCompensation = settings.exposureCompensation,
+                focusDistance = settings.focusDistance
             )
+            else -> settings
+        }
+    }
+
+    private fun adjustForDistance(settings: CameraSettings, distance: DistanceRange): CameraSettings {
+        return when (distance) {
+            DistanceRange.MACRO -> settings.copy(focusDistance = maxOf(settings.focusDistance, 0.1f))
+            DistanceRange.NEAR -> settings.copy(focusDistance = maxOf(settings.focusDistance, 0.5f))
             else -> settings
         }
     }

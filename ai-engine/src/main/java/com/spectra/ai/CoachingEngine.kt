@@ -9,58 +9,65 @@ import javax.inject.Singleton
 @Singleton
 class CoachingEngine @Inject constructor() {
 
-    private var lastHintText: String? = null
+    private var lastHint: CoachingHint? = null
     private var lastHintTimeMs: Long = 0L
-    private val hintCooldownMs = 5000L
+    private val hintCooldownMs = 10000L
+    private var hintsShownThisSession = 0
+    private var lastDismissTimeMs: Long = 0L
 
     fun generateCoaching(analysis: SceneAnalysis, mode: CameraMode): CoachingHint? {
         if (!analysis.isStable) return null
+        if (hintsShownThisSession > 12) return null
+
+        val now = System.currentTimeMillis()
+        if (now - lastDismissTimeMs < 15000L) return null
+        if (lastHint != null && now - lastHintTimeMs < hintCooldownMs) return lastHint
 
         val hint = when {
-            mode == CameraMode.NIGHT -> nightModeHint(analysis)
+            mode == CameraMode.NIGHT -> nightHint(analysis)
             analysis.motionLevel == MotionLevel.FAST || analysis.motionLevel == MotionLevel.VERY_FAST ->
                 motionHint(analysis)
-            analysis.lighting == LightingCondition.BACKLIT -> backlitHint(analysis)
+            analysis.lighting == LightingCondition.BACKLIT -> backlitHint()
             else -> sceneHint(analysis, mode)
         }
 
-        if (hint != null && hint.text == lastHintText &&
-            System.currentTimeMillis() - lastHintTimeMs < hintCooldownMs) {
-            return hint
-        }
-
-        if (hint != null) {
-            lastHintText = hint.text
-            lastHintTimeMs = System.currentTimeMillis()
+        if (hint != null && hint != lastHint) {
+            lastHint = hint
+            lastHintTimeMs = now
+            hintsShownThisSession++
         }
 
         return hint
     }
 
-    private fun nightModeHint(analysis: SceneAnalysis): CoachingHint {
+    fun onDismissed() {
+        lastDismissTimeMs = System.currentTimeMillis()
+        lastHint = null
+    }
+
+    private fun nightHint(analysis: SceneAnalysis): CoachingHint? {
         return when {
             analysis.motionLevel >= MotionLevel.MODERATE ->
-                CoachingHint("HOLD STEADY · LONG EXPOSURE ACTIVE", ArrowDirection.STEADY, priority = 10)
+                CoachingHint("Hold very still — long exposure active", ArrowDirection.STEADY, priority = 10)
             analysis.motionLevel == MotionLevel.SLOW ->
-                CoachingHint("STABILIZE · BRACE AGAINST SURFACE", ArrowDirection.STEADY, priority = 8)
-            else ->
-                CoachingHint("STEADY · CAPTURING LIGHT", ArrowDirection.STEADY, priority = 5)
+                CoachingHint("Rest your phone against something solid", ArrowDirection.STEADY, priority = 8)
+            else -> null
         }
     }
 
     private fun motionHint(analysis: SceneAnalysis): CoachingHint {
         return when (analysis.sceneType) {
             SceneType.PET ->
-                CoachingHint("FAST SUBJECT · USE BURST MODE", ArrowDirection.NONE, priority = 8)
+                CoachingHint("Moving subject — hold shutter for burst", ArrowDirection.NONE, priority = 8)
             SceneType.ACTION ->
-                CoachingHint("PAN WITH SUBJECT · BURST RECOMMENDED", ArrowDirection.NONE, priority = 8)
+                CoachingHint("Follow the action — hold shutter for burst", ArrowDirection.NONE, priority = 8)
             else ->
-                CoachingHint("MOTION DETECTED · BURST RECOMMENDED", ArrowDirection.NONE, priority = 7)
+                CoachingHint("Movement detected — hold shutter for burst", ArrowDirection.NONE, priority = 7)
         }
     }
 
-    private fun backlitHint(analysis: SceneAnalysis): CoachingHint {
-        return CoachingHint("BACKLIT · REPOSITION OR TAP SUBJECT", ArrowDirection.NONE, priority = 9)
+    private fun backlitHint(): CoachingHint {
+        return CoachingHint("Strong backlight — tap your subject to brighten it", ArrowDirection.NONE, priority = 9)
     }
 
     private fun sceneHint(analysis: SceneAnalysis, mode: CameraMode): CoachingHint? {
@@ -68,11 +75,11 @@ class CoachingEngine @Inject constructor() {
             SceneType.LANDSCAPE -> landscapeHint(analysis)
             SceneType.PORTRAIT -> portraitHint(analysis, mode)
             SceneType.FOOD -> foodHint(analysis)
-            SceneType.ARCHITECTURE -> architectureHint(analysis)
-            SceneType.MACRO -> macroHint(analysis)
-            SceneType.PET -> petHint(analysis)
-            SceneType.ACTION -> actionHint(analysis)
-            SceneType.DOCUMENT -> documentHint(analysis)
+            SceneType.ARCHITECTURE -> architectureHint()
+            SceneType.MACRO -> macroHint()
+            SceneType.PET -> petHint()
+            SceneType.ACTION -> actionHint()
+            SceneType.DOCUMENT -> documentHint()
             SceneType.INDOOR -> indoorHint(analysis)
             else -> null
         }
@@ -81,13 +88,13 @@ class CoachingEngine @Inject constructor() {
     private fun landscapeHint(analysis: SceneAnalysis): CoachingHint {
         return when (analysis.lighting) {
             LightingCondition.GOLDEN_HOUR ->
-                CoachingHint("GOLDEN HOUR · HORIZON ON LOWER THIRD", ArrowDirection.DOWN, priority = 5)
+                CoachingHint("Beautiful light — tilt down to show more sky", ArrowDirection.DOWN, priority = 5)
             LightingCondition.BLUE_HOUR ->
-                CoachingHint("BLUE HOUR · INCLUDE SKY GRADIENT", ArrowDirection.UP, priority = 5)
+                CoachingHint("Blue hour — include the sky gradient", ArrowDirection.UP, priority = 5)
             LightingCondition.HARSH_MIDDAY ->
-                CoachingHint("HARSH LIGHT · FIND SHADOWS OR WAIT", ArrowDirection.NONE, priority = 4)
+                CoachingHint("Harsh sunlight — try finding a shaded area", ArrowDirection.NONE, priority = 4)
             else ->
-                CoachingHint("FIND LEADING LINES · RULE OF THIRDS", ArrowDirection.NONE, priority = 3)
+                CoachingHint("Place your subject slightly off-center", ArrowDirection.NONE, priority = 3)
         }
     }
 
@@ -95,59 +102,61 @@ class CoachingEngine @Inject constructor() {
         return if (mode == CameraMode.PORT) {
             when (analysis.distanceRange) {
                 DistanceRange.FAR ->
-                    CoachingHint("MOVE CLOSER · FILL FRAME WITH SUBJECT", ArrowDirection.NONE, priority = 7)
+                    CoachingHint("Take two steps closer to your subject", ArrowDirection.NONE, priority = 7)
                 DistanceRange.NEAR, DistanceRange.MACRO ->
-                    CoachingHint("STEP BACK · HEAD AND SHOULDERS", ArrowDirection.NONE, priority = 6)
+                    CoachingHint("Step back a little — show head and shoulders", ArrowDirection.NONE, priority = 6)
                 else ->
-                    CoachingHint("FOCUS ON EYES · FACE THE LIGHT", ArrowDirection.NONE, priority = 4)
+                    CoachingHint("Tap the eyes to focus there", ArrowDirection.NONE, priority = 4)
             }
         } else {
-            CoachingHint("EYES IN FOCUS · NATURAL LIGHT", ArrowDirection.NONE, priority = 3)
+            CoachingHint("Face your subject toward the light", ArrowDirection.NONE, priority = 3)
         }
     }
 
     private fun foodHint(analysis: SceneAnalysis): CoachingHint {
         return when (analysis.distanceRange) {
             DistanceRange.MACRO, DistanceRange.NEAR ->
-                CoachingHint("TRY 45° OR OVERHEAD ANGLE", ArrowDirection.DOWN, priority = 4)
+                CoachingHint("Try shooting from above or at 45 degrees", ArrowDirection.DOWN, priority = 4)
             else ->
-                CoachingHint("MOVE CLOSER · FILL THE FRAME", ArrowDirection.NONE, priority = 5)
+                CoachingHint("Get closer — fill the frame with the dish", ArrowDirection.NONE, priority = 5)
         }
     }
 
-    private fun architectureHint(analysis: SceneAnalysis): CoachingHint {
-        return CoachingHint("STRAIGHTEN VERTICALS · FIND SYMMETRY", ArrowDirection.UP, priority = 4)
+    private fun architectureHint(): CoachingHint {
+        return CoachingHint("Keep your phone level — look for symmetry", ArrowDirection.STEADY, priority = 4)
     }
 
-    private fun macroHint(analysis: SceneAnalysis): CoachingHint {
-        return CoachingHint("HOLD BREATH · MINIMIZE MOVEMENT", ArrowDirection.STEADY, priority = 6)
+    private fun macroHint(): CoachingHint {
+        return CoachingHint("Hold your breath — tiny movements blur close-ups", ArrowDirection.STEADY, priority = 6)
     }
 
-    private fun petHint(analysis: SceneAnalysis): CoachingHint {
-        return CoachingHint("EYE LEVEL WITH SUBJECT", ArrowDirection.DOWN, priority = 4)
+    private fun petHint(): CoachingHint {
+        return CoachingHint("Get down to their eye level", ArrowDirection.DOWN, priority = 4)
     }
 
-    private fun actionHint(analysis: SceneAnalysis): CoachingHint {
-        return CoachingHint("PRE-FOCUS · PAN WITH SUBJECT", ArrowDirection.RIGHT, priority = 5)
+    private fun actionHint(): CoachingHint {
+        return CoachingHint("Tap where the action will happen, then hold shutter", ArrowDirection.NONE, priority = 5)
     }
 
-    private fun documentHint(analysis: SceneAnalysis): CoachingHint {
-        return CoachingHint("SHOOT OVERHEAD · EVEN LIGHTING", ArrowDirection.DOWN, priority = 4)
+    private fun documentHint(): CoachingHint {
+        return CoachingHint("Hold directly overhead — make sure lighting is even", ArrowDirection.DOWN, priority = 4)
     }
 
     private fun indoorHint(analysis: SceneAnalysis): CoachingHint {
         return when (analysis.lighting) {
             LightingCondition.LOW_LIGHT ->
-                CoachingHint("FIND WINDOW LIGHT · STABILIZE", ArrowDirection.STEADY, priority = 5)
+                CoachingHint("Move toward a window for better light", ArrowDirection.STEADY, priority = 5)
             LightingCondition.ARTIFICIAL ->
-                CoachingHint("CHECK WHITE BALANCE · WINDOW LIGHT BETTER", ArrowDirection.NONE, priority = 3)
+                CoachingHint("Window light gives more natural colors", ArrowDirection.NONE, priority = 3)
             else ->
-                CoachingHint("USE NATURAL LIGHT SOURCE", ArrowDirection.NONE, priority = 3)
+                CoachingHint("Face your subject toward the light source", ArrowDirection.NONE, priority = 3)
         }
     }
 
     fun reset() {
-        lastHintText = null
+        lastHint = null
         lastHintTimeMs = 0L
+        hintsShownThisSession = 0
+        lastDismissTimeMs = 0L
     }
 }

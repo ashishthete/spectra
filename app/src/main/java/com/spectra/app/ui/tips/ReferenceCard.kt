@@ -39,7 +39,7 @@ fun ReferenceCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth(0.85f)
-                    .border(1.dp, HudColors.neonGreen, RectangleShape)
+                    .border(1.dp, HudColors.accent, RectangleShape)
                     .background(HudColors.background)
                     .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -55,7 +55,7 @@ fun ReferenceCard(
                     )
                     Text(
                         text = "✕",
-                        color = HudColors.neonGreenDim,
+                        color = HudColors.accentDim,
                         fontSize = 16.sp,
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                         modifier = Modifier.clickable { onDismiss() }
@@ -68,7 +68,7 @@ fun ReferenceCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(1.dp)
-                        .background(HudColors.borderGreen)
+                        .background(HudColors.borderLight)
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -98,7 +98,7 @@ fun ReferenceCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(1.dp)
-                        .background(HudColors.borderGreen)
+                        .background(HudColors.borderLight)
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(

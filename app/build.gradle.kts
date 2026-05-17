@@ -64,6 +64,8 @@ dependencies {
     implementation(libs.hilt.navigation.compose)
 
     implementation(libs.coroutines.android)
+    implementation(libs.coil.compose)
+    implementation(libs.datastore.preferences)
 
     testImplementation(libs.junit)
     testImplementation(libs.truth)

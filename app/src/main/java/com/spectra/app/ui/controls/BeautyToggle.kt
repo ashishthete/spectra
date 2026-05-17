@@ -44,7 +44,7 @@ fun BeautyToggle(
                     .clip(CircleShape)
                     .border(
                         width = 1.5.dp,
-                        color = if (beautyLevel > 0) Color(0xFFFFB6C1) else HudColors.borderGreen,
+                        color = if (beautyLevel > 0) Color(0xFFFFB6C1) else HudColors.borderLight,
                         shape = CircleShape
                     )
                     .clickable { onToggle() },
@@ -52,7 +52,7 @@ fun BeautyToggle(
             ) {
                 Text(
                     text = "✦",
-                    color = if (beautyLevel > 0) Color(0xFFFFB6C1) else HudColors.neonGreen,
+                    color = if (beautyLevel > 0) Color(0xFFFFB6C1) else HudColors.accent,
                     fontSize = 18.sp
                 )
             }

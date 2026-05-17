@@ -2,16 +2,16 @@ package com.spectra.app.ui.hud
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spectra.ai.model.ArrowDirection
@@ -28,9 +28,9 @@ fun CoachingDirective(
     val infiniteTransition = rememberInfiniteTransition(label = "coaching")
     val arrowAlpha by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = 0.3f,
+        targetValue = 0.4f,
         animationSpec = infiniteRepeatable(
-            animation = tween(800, easing = LinearEasing),
+            animation = tween(900, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "arrowPulse"
@@ -41,39 +41,31 @@ fun CoachingDirective(
         modifier = modifier.clickable { onDismiss() }
     ) {
         if (arrowDirection == ArrowDirection.UP) {
-            ArrowText(symbol = "▲", alpha = arrowAlpha)
+            ArrowText(symbol = "↑", alpha = arrowAlpha)
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+        if (arrowDirection == ArrowDirection.STEADY) {
+            SteadyLabel(alpha = arrowAlpha)
             Spacer(modifier = Modifier.height(4.dp))
         }
 
-        if (arrowDirection == ArrowDirection.LEFT) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ArrowText(symbol = "◄", alpha = arrowAlpha)
-                Spacer(modifier = Modifier.width(8.dp))
-                CoachingBox(text = text)
-                Spacer(modifier = Modifier.width(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (arrowDirection == ArrowDirection.LEFT) {
+                ArrowText(symbol = "←", alpha = arrowAlpha)
+                Spacer(modifier = Modifier.width(6.dp))
             }
-        } else if (arrowDirection == ArrowDirection.RIGHT) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Spacer(modifier = Modifier.width(8.dp))
-                CoachingBox(text = text)
-                Spacer(modifier = Modifier.width(8.dp))
-                ArrowText(symbol = "►", alpha = arrowAlpha)
+
+            CoachingBox(text = text)
+
+            if (arrowDirection == ArrowDirection.RIGHT) {
+                Spacer(modifier = Modifier.width(6.dp))
+                ArrowText(symbol = "→", alpha = arrowAlpha)
             }
-        } else if (arrowDirection == ArrowDirection.STEADY) {
-            SteadyLabel(alpha = arrowAlpha)
-            Spacer(modifier = Modifier.height(4.dp))
-            CoachingBox(text = text)
-        } else {
-            CoachingBox(text = text)
         }
 
         if (arrowDirection == ArrowDirection.DOWN) {
             Spacer(modifier = Modifier.height(4.dp))
-            ArrowText(symbol = "▼", alpha = arrowAlpha)
+            ArrowText(symbol = "↓", alpha = arrowAlpha)
         }
     }
 }
@@ -82,9 +74,9 @@ fun CoachingDirective(
 private fun ArrowText(symbol: String, alpha: Float) {
     Text(
         text = symbol,
-        color = HudColors.neonGreen,
-        fontSize = 16.sp,
-        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+        color = HudColors.accent,
+        fontSize = 18.sp,
+        fontFamily = FontFamily.SansSerif,
         modifier = Modifier.alpha(alpha)
     )
 }
@@ -95,19 +87,18 @@ private fun CoachingBox(text: String) {
         text = text,
         style = HudTypography.coaching,
         modifier = Modifier
-            .border(1.dp, HudColors.borderGreen, RectangleShape)
-            .background(HudColors.background.copy(alpha = 0.7f))
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .background(HudColors.surfaceGlass, RoundedCornerShape(12.dp))
+            .padding(horizontal = 14.dp, vertical = 8.dp)
     )
 }
 
 @Composable
 private fun SteadyLabel(alpha: Float) {
     Text(
-        text = "⊕ STEADY",
-        color = HudColors.neonGreen,
+        text = "● Hold steady",
+        color = HudColors.accent,
         fontSize = 10.sp,
-        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+        fontFamily = FontFamily.SansSerif,
         modifier = Modifier.alpha(alpha)
     )
 }

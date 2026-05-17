@@ -16,6 +16,8 @@ serialization = "1.7.3"
 junit = "4.13.2"
 truth = "1.4.4"
 mockk = "1.13.13"
+coil = "2.7.0"
+mlkitFaceDetection = "16.1.7"
 
 [libraries]
 core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -52,7 +54,10 @@ serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-jso
 junit = { module = "junit:junit", version.ref = "junit" }
 truth = { module = "com.google.truth:truth", version.ref = "truth" }
 mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
+coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
 coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+mlkit-face-detection = { module = "com.google.mlkit:face-detection", version.ref = "mlkitFaceDetection" }
+coroutines-play-services = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-play-services", version.ref = "coroutines" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

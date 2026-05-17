@@ -4,25 +4,70 @@ data class HudState(
     val activeLens: LensId = LensId.MAIN,
     val settings: CameraSettings = CameraSettings(),
     val mode: CameraMode = CameraMode.PHOTO,
+    val preset: CameraPreset = CameraPreset.PORTRAIT,
+    val processing: ProcessingParams = ProcessingParams(),
     val isHudVisible: Boolean = true,
-    val sceneLabel: String = "READY",
+
+    val sceneLabel: String = "",
     val sceneConfidence: Float = 0f,
-    val lightingLabel: String = "—",
+    val lightingLabel: String = "",
     val motionLevel: Int = 0,
-    val distanceLabel: String = "—",
+    val distanceLabel: String = "",
+
     val coachingText: String? = null,
     val coachingArrow: String = "NONE",
+    val cloudCoachingText: String? = null,
+    val cloudCoachingArrow: String = "NONE",
+
     val lensMatchScores: Map<LensId, Float> = LensId.entries.associateWith {
         if (it == activeLens) 1.0f else 0f
     },
+    val recommendedLens: LensId? = null,
+
     val isBurstActive: Boolean = false,
     val lastCapturedUri: String? = null,
-    val showTipsThumbnail: Boolean = false,
     val showReferenceCard: Boolean = false,
-    val cloudCoachingText: String? = null,
-    val cloudCoachingArrow: String = "NONE",
+
     val aiRecommendedSettings: CameraSettings = CameraSettings(),
     val isManualOverride: Boolean = false,
+
     val isFrontCamera: Boolean = false,
-    val beautyLevel: Int = 0  // 0=off, 1=low, 2=medium, 3=high
+    val beautyLevel: Int = 0,
+    val cameraMegapixels: Int = 12,
+    val cameraAperture: Float = 1.7f,
+
+    val flashMode: FlashMode = FlashMode.AUTO,
+    val timerSeconds: Int = 0,
+    val aspectRatio: AspectRatio = AspectRatio.RATIO_4_3,
+
+    val zoomRatio: Float = 1f,
+    val maxZoomRatio: Float = 10f,
+
+    val levelAngle: Float = 0f,
+    val pitchAngle: Float = 0f,
+
+    val isFocusing: Boolean = false,
+    val focusX: Float = 0.5f,
+    val focusY: Float = 0.5f,
+    val focusSuccess: Boolean = false,
+
+    val actualIso: Int = 0,
+    val actualShutterSpeedNs: Long = 0L,
+    val actualFocusDistance: Float = 0f,
+
+    val timerCountdown: Int = 0,
+    val showCaptureFlash: Boolean = false,
+
+    val faceCount: Int = 0,
+    val anyoneSmiling: Boolean = false,
+    val allEyesOpen: Boolean = true,
+    val anyBlinking: Boolean = false,
+
+    val aeAfLocked: Boolean = false,
+
+    val showReview: Boolean = false,
+    val reviewUri: String? = null,
+    val lensHint: String? = null,
+
+    val photoStyle: PhotoStyle = PhotoStyle.NATURAL
 )

@@ -13,7 +13,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.spectra.app.ui.theme.HudColors
 import com.spectra.app.ui.theme.HudTypography
@@ -41,9 +40,9 @@ fun GhostMarkerSlider(
                 onValueChange = onValueChange,
                 valueRange = valueRange,
                 colors = SliderDefaults.colors(
-                    thumbColor = HudColors.neonGreen,
-                    activeTrackColor = HudColors.neonGreen.copy(alpha = 0.7f),
-                    inactiveTrackColor = HudColors.neonGreen.copy(alpha = 0.2f)
+                    thumbColor = HudColors.accent,
+                    activeTrackColor = HudColors.accent.copy(alpha = 0.7f),
+                    inactiveTrackColor = HudColors.accent.copy(alpha = 0.2f)
                 )
             )
 
@@ -62,12 +61,12 @@ fun GhostMarkerSlider(
                 val xPos = 20.dp.toPx() + fraction * trackWidth
 
                 drawCircle(
-                    color = Color(0x8800FF88),
+                    color = HudColors.aiCyan.copy(alpha = 0.5f),
                     radius = 8.dp.toPx(),
                     center = Offset(xPos, size.height / 2)
                 )
                 drawCircle(
-                    color = HudColors.neonGreen.copy(alpha = 0.3f),
+                    color = HudColors.aiCyan.copy(alpha = 0.3f),
                     radius = 12.dp.toPx(),
                     center = Offset(xPos, size.height / 2)
                 )
