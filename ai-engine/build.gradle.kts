@@ -19,11 +19,18 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    aaptOptions {
+        noCompress += "tflite"
+    }
 }
 
 dependencies {
     implementation(project(":core"))
     implementation(libs.coroutines.core)
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
     testImplementation(libs.junit)
     testImplementation(libs.truth)
 }
