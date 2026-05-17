@@ -11,6 +11,7 @@ data class HudState(
     val motionLevel: Int = 0,
     val distanceLabel: String = "—",
     val coachingText: String? = null,
+    val coachingArrow: String = "NONE",
     val lensMatchScores: Map<LensId, Float> = LensId.entries.associateWith {
         if (it == activeLens) 1.0f else 0f
     },

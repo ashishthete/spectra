@@ -10,7 +10,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.spectra.ai.model.ArrowDirection
 import com.spectra.app.ui.tips.TipsThumbnail
+import com.spectra.core.model.CameraMode
 import com.spectra.core.model.HudState
 
 @Composable
@@ -67,8 +69,14 @@ fun HudOverlay(
 
                 val coaching = state.coachingText
                 if (coaching != null) {
+                    val arrow = try {
+                        ArrowDirection.valueOf(state.coachingArrow)
+                    } catch (_: Exception) {
+                        ArrowDirection.NONE
+                    }
                     CoachingDirective(
                         text = coaching,
+                        arrowDirection = arrow,
                         onDismiss = onCoachingDismiss,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -83,6 +91,14 @@ fun HudOverlay(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(end = 24.dp, bottom = 180.dp)
+                )
+
+                StabilityIndicator(
+                    motionLevel = state.motionLevel,
+                    isNightMode = state.mode == CameraMode.NIGHT,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 24.dp, bottom = 180.dp)
                 )
             }
         }
