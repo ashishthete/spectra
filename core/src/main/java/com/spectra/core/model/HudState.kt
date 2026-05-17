@@ -20,5 +20,7 @@ data class HudState(
     val showTipsThumbnail: Boolean = false,
     val showReferenceCard: Boolean = false,
     val cloudCoachingText: String? = null,
-    val cloudCoachingArrow: String = "NONE"
+    val cloudCoachingArrow: String = "NONE",
+    val aiRecommendedSettings: CameraSettings = CameraSettings(),
+    val isManualOverride: Boolean = false
 )

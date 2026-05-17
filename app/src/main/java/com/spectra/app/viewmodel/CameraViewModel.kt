@@ -9,6 +9,7 @@ import com.spectra.camera.CaptureManager
 import com.spectra.camera.FrameProvider
 import com.spectra.camera.SpectraCameraController
 import com.spectra.core.model.CameraMode
+import com.spectra.core.model.CameraSettings
 import com.spectra.core.model.HudState
 import com.spectra.core.model.LensId
 import com.spectra.core.model.SceneType
@@ -86,8 +87,15 @@ class CameraViewModel @Inject constructor(
 
         viewModelScope.launch {
             pipeline.settingsProfile.collect { profile ->
-                if (_hudState.value.mode != CameraMode.PRO) {
-                    _hudState.update { it.copy(settings = profile.settings) }
+                _hudState.update { state ->
+                    if (state.mode == CameraMode.PRO) {
+                        state.copy(aiRecommendedSettings = profile.settings)
+                    } else {
+                        state.copy(
+                            settings = profile.settings,
+                            aiRecommendedSettings = profile.settings
+                        )
+                    }
                 }
             }
         }
@@ -155,6 +163,36 @@ class CameraViewModel @Inject constructor(
 
     fun dismissReferenceCard() {
         _hudState.update { it.copy(showReferenceCard = false) }
+    }
+
+    fun updateProSetting(
+        iso: Int? = null,
+        shutterSpeedDenominator: Int? = null,
+        whiteBalanceKelvin: Int? = null,
+        exposureCompensation: Float? = null,
+        focusDistance: Float? = null
+    ) {
+        _hudState.update { state ->
+            val current = state.settings
+            val updated = CameraSettings.clamped(
+                iso = iso ?: current.iso,
+                shutterSpeedDenominator = shutterSpeedDenominator ?: current.shutterSpeedDenominator,
+                whiteBalanceKelvin = whiteBalanceKelvin ?: current.whiteBalanceKelvin,
+                exposureCompensation = exposureCompensation ?: current.exposureCompensation,
+                focusDistance = focusDistance ?: current.focusDistance
+            )
+            val isOverride = updated != state.aiRecommendedSettings
+            state.copy(settings = updated, isManualOverride = isOverride)
+        }
+    }
+
+    fun snapToAiRecommendation() {
+        _hudState.update { state ->
+            state.copy(
+                settings = state.aiRecommendedSettings,
+                isManualOverride = false
+            )
+        }
     }
 
     fun capturePhoto() {
