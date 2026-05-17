@@ -2,6 +2,7 @@ package com.spectra.camera
 
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.RggbChannelVector
+import android.util.Range
 import android.util.Log
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.CaptureRequestOptions
@@ -17,10 +18,14 @@ class Camera2SettingsApplier @Inject constructor() {
     fun applyManual(camera: Camera, settings: CameraSettings) {
         val camera2Control = Camera2CameraControl.from(camera.cameraControl)
 
-        val options = CaptureRequestOptions.Builder()
+        val builder = CaptureRequestOptions.Builder()
             .setCaptureRequestOption(
                 CaptureRequest.CONTROL_MODE,
-                CaptureRequest.CONTROL_MODE_OFF
+                CaptureRequest.CONTROL_MODE_AUTO
+            )
+            .setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_MODE,
+                CaptureRequest.CONTROL_AE_MODE_OFF
             )
             .setCaptureRequestOption(
                 CaptureRequest.SENSOR_SENSITIVITY,
@@ -30,35 +35,57 @@ class Camera2SettingsApplier @Inject constructor() {
                 CaptureRequest.SENSOR_EXPOSURE_TIME,
                 shutterDenominatorToNanos(settings.shutterSpeedDenominator)
             )
-            .setCaptureRequestOption(
+
+        if (settings.whiteBalanceKelvin != 5500) {
+            builder.setCaptureRequestOption(
                 CaptureRequest.CONTROL_AWB_MODE,
                 CaptureRequest.CONTROL_AWB_MODE_OFF
             )
-            .setCaptureRequestOption(
+            builder.setCaptureRequestOption(
                 CaptureRequest.COLOR_CORRECTION_MODE,
                 CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX
             )
-            .setCaptureRequestOption(
+            builder.setCaptureRequestOption(
                 CaptureRequest.COLOR_CORRECTION_GAINS,
                 kelvinToRggb(settings.whiteBalanceKelvin)
             )
-            .setCaptureRequestOption(
+        } else {
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AWB_MODE,
+                CaptureRequest.CONTROL_AWB_MODE_AUTO
+            )
+        }
+
+        if (settings.focusDistance > 0f) {
+            builder.setCaptureRequestOption(
                 CaptureRequest.CONTROL_AF_MODE,
                 CaptureRequest.CONTROL_AF_MODE_OFF
             )
-            .setCaptureRequestOption(
+            builder.setCaptureRequestOption(
                 CaptureRequest.LENS_FOCUS_DISTANCE,
-                if (settings.focusDistance > 0f) 1f / settings.focusDistance else 0f
+                1f / settings.focusDistance
             )
-            .build()
+        } else {
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+            )
+        }
 
-        camera2Control.captureRequestOptions = options
-        Log.d("SettingsApplier", "Manual: ISO=${settings.iso}, shutter=1/${settings.shutterSpeedDenominator}, WB=${settings.whiteBalanceKelvin}K")
+        camera2Control.captureRequestOptions = builder.build()
+        Log.d("SettingsApplier", "Manual: ISO=${settings.iso}, shutter=1/${settings.shutterSpeedDenominator}, WB=${settings.whiteBalanceKelvin}K, focus=${settings.focusDistance}")
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
-    fun applyAutoWithHints(camera: Camera, settings: CameraSettings) {
-        val evSteps = (settings.exposureCompensation * 6).toInt().coerceIn(-12, 12)
+    fun applyAutoWithHints(camera: Camera, settings: CameraSettings, motionLevel: Int = 0, currentIso: Int = 0) {
+        val motionEvBias = when {
+            motionLevel >= 4 && settings.shutterSpeedDenominator >= 500 -> -1.5f
+            motionLevel >= 3 && settings.shutterSpeedDenominator >= 250 -> -1.0f
+            motionLevel >= 2 && settings.shutterSpeedDenominator >= 125 -> -0.5f
+            else -> 0f
+        }
+        val totalEv = settings.exposureCompensation + motionEvBias
+        val evSteps = (totalEv * 6).toInt().coerceIn(-12, 12)
         try {
             camera.cameraControl.setExposureCompensationIndex(evSteps)
         } catch (_: Exception) { }
@@ -71,26 +98,59 @@ class Camera2SettingsApplier @Inject constructor() {
                 CaptureRequest.CONTROL_MODE_AUTO
             )
             .setCaptureRequestOption(
-                CaptureRequest.CONTROL_AWB_MODE,
-                CaptureRequest.CONTROL_AWB_MODE_AUTO
-            )
-            .setCaptureRequestOption(
                 CaptureRequest.CONTROL_AF_MODE,
                 CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
             )
 
+        if (motionLevel >= 3) {
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+                Range(24, 30)
+            )
+        }
+
+        val wbDrift = kotlin.math.abs(settings.whiteBalanceKelvin - 5500)
+        if (wbDrift > 500) {
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AWB_MODE,
+                CaptureRequest.CONTROL_AWB_MODE_OFF
+            )
+            builder.setCaptureRequestOption(
+                CaptureRequest.COLOR_CORRECTION_MODE,
+                CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX
+            )
+            builder.setCaptureRequestOption(
+                CaptureRequest.COLOR_CORRECTION_GAINS,
+                kelvinToRggb(settings.whiteBalanceKelvin)
+            )
+            Log.d("SettingsApplier", "Auto-hints: EV=$evSteps(motion=$motionEvBias), WB=${settings.whiteBalanceKelvin}K(override)")
+        } else {
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AWB_MODE,
+                CaptureRequest.CONTROL_AWB_MODE_AUTO
+            )
+            Log.d("SettingsApplier", "Auto-hints: EV=$evSteps(motion=$motionEvBias), WB=auto")
+        }
+
         camera2Control.captureRequestOptions = builder.build()
-        Log.d("SettingsApplier", "Auto-hints: EV=$evSteps, WB=${settings.whiteBalanceKelvin}K(auto)")
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
     fun applyAuto(camera: Camera) {
         val camera2Control = Camera2CameraControl.from(camera.cameraControl)
 
+        try {
+            camera.cameraControl.setExposureCompensationIndex(0)
+        } catch (_: Exception) { }
+
         val options = CaptureRequestOptions.Builder()
             .setCaptureRequestOption(
                 CaptureRequest.CONTROL_MODE,
                 CaptureRequest.CONTROL_MODE_AUTO
+            )
+            .setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_MODE,
+                CaptureRequest.CONTROL_AE_MODE_ON
             )
             .setCaptureRequestOption(
                 CaptureRequest.CONTROL_AWB_MODE,
@@ -104,6 +164,70 @@ class Camera2SettingsApplier @Inject constructor() {
 
         camera2Control.captureRequestOptions = options
     }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    fun applySemiAuto(
+        camera: Camera,
+        settings: CameraSettings,
+        isoRange: android.util.Range<Int> = Range(50, 3200),
+        exposureRange: android.util.Range<Long> = Range(1_000_000L, 1_000_000_000L)
+    ) {
+        val camera2Control = Camera2CameraControl.from(camera.cameraControl)
+
+        val clampedIso = clampIso(settings.iso, isoRange.lower, isoRange.upper)
+        val targetExposureNs = shutterDenominatorToNanos(settings.shutterSpeedDenominator)
+        val clampedExposureNs = clampExposureNs(targetExposureNs, exposureRange.lower, exposureRange.upper)
+
+        val builder = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(
+                CaptureRequest.CONTROL_MODE,
+                CaptureRequest.CONTROL_MODE_AUTO
+            )
+            .setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_MODE,
+                CaptureRequest.CONTROL_AE_MODE_OFF
+            )
+            .setCaptureRequestOption(
+                CaptureRequest.SENSOR_SENSITIVITY,
+                clampedIso
+            )
+            .setCaptureRequestOption(
+                CaptureRequest.SENSOR_EXPOSURE_TIME,
+                clampedExposureNs
+            )
+            .setCaptureRequestOption(
+                CaptureRequest.CONTROL_AF_MODE,
+                CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+            )
+
+        val wbDrift = kotlin.math.abs(settings.whiteBalanceKelvin - 5500)
+        if (wbDrift > 300) {
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AWB_MODE,
+                CaptureRequest.CONTROL_AWB_MODE_OFF
+            )
+            builder.setCaptureRequestOption(
+                CaptureRequest.COLOR_CORRECTION_MODE,
+                CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX
+            )
+            builder.setCaptureRequestOption(
+                CaptureRequest.COLOR_CORRECTION_GAINS,
+                kelvinToRggb(settings.whiteBalanceKelvin)
+            )
+        } else {
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_AWB_MODE,
+                CaptureRequest.CONTROL_AWB_MODE_AUTO
+            )
+        }
+
+        camera2Control.captureRequestOptions = builder.build()
+        Log.d("SettingsApplier", "SemiAuto: ISO=$clampedIso, exposure=${clampedExposureNs}ns, WB=${settings.whiteBalanceKelvin}K")
+    }
+
+    private fun clampIso(iso: Int, min: Int, max: Int): Int = iso.coerceIn(min, max)
+
+    private fun clampExposureNs(ns: Long, min: Long, max: Long): Long = ns.coerceIn(min, max)
 
     private fun shutterDenominatorToNanos(denominator: Int): Long {
         if (denominator <= 0) return 1_000_000_000L
