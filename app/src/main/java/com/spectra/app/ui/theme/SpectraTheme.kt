@@ -22,6 +22,7 @@ object HudColors {
     val textSecondary = Color(0x9900FF88)
     val textMuted = Color(0x5500FF88)
     val red = Color(0xFFFF4444)
+    val warningAmber = Color(0xFFFFAA00)
 }
 
 object HudTypography {
