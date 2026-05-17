@@ -16,25 +16,25 @@ class CameraSettingsTest {
 
     @Test
     fun `iso clamps to valid range`() {
-        val settings = CameraSettings(iso = 50000)
+        val settings = CameraSettings.clamped(iso = 50000)
         assertThat(settings.iso).isEqualTo(3200)
     }
 
     @Test
     fun `iso clamps lower bound`() {
-        val settings = CameraSettings(iso = 10)
+        val settings = CameraSettings.clamped(iso = 10)
         assertThat(settings.iso).isEqualTo(50)
     }
 
     @Test
     fun `white balance clamps to valid range`() {
-        val settings = CameraSettings(whiteBalanceKelvin = 20000)
+        val settings = CameraSettings.clamped(whiteBalanceKelvin = 20000)
         assertThat(settings.whiteBalanceKelvin).isEqualTo(10000)
     }
 
     @Test
     fun `exposure compensation clamps`() {
-        val settings = CameraSettings(exposureCompensation = 5f)
+        val settings = CameraSettings.clamped(exposureCompensation = 5f)
         assertThat(settings.exposureCompensation).isEqualTo(3f)
     }
 
