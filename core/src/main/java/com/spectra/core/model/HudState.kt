@@ -54,9 +54,11 @@ data class HudState(
     val actualIso: Int = 0,
     val actualShutterSpeedNs: Long = 0L,
     val actualFocusDistance: Float = 0f,
+    val actualColorTemperature: Int = 0,
 
     val timerCountdown: Int = 0,
     val showCaptureFlash: Boolean = false,
+    val isCapturing: Boolean = false,
 
     val faceCount: Int = 0,
     val anyoneSmiling: Boolean = false,
@@ -64,10 +66,34 @@ data class HudState(
     val anyBlinking: Boolean = false,
 
     val aeAfLocked: Boolean = false,
+    val settingsDisplayMode: SettingsDisplayMode = SettingsDisplayMode.ACTUAL,
 
     val showReview: Boolean = false,
     val reviewUri: String? = null,
     val lensHint: String? = null,
 
-    val photoStyle: PhotoStyle = PhotoStyle.NATURAL
-)
+    val showSmartReview: Boolean = false,
+    val bestOriginalUri: String? = null,
+    val aiEnhancedUri: String? = null,
+    val isEnhancing: Boolean = false,
+
+    val photoStyle: PhotoStyle = PhotoStyle.NATURAL,
+
+    val isHdrActive: Boolean = false,
+    val sceneContrast: Float = 0f,
+    val histogramData: IntArray = IntArray(256),
+
+    val isRecording: Boolean = false,
+    val recordingDurationMs: Long = 0L,
+
+    val focusPeakingEnabled: Boolean = false,
+    val zebraEnabled: Boolean = false,
+    val zebraThreshold: Int = 235,
+    val gridMode: GridMode = GridMode.THIRDS,
+    val focusPeakingData: IntArray? = null,
+    val zebraData: IntArray? = null,
+    val analysisWidth: Int = 0,
+    val analysisHeight: Int = 0
+) {
+    val isLowLight: Boolean get() = actualIso > 800 || actualShutterSpeedNs > 33_000_000L
+}
