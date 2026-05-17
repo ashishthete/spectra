@@ -1,6 +1,7 @@
 package com.spectra.ai
 
 import android.graphics.Bitmap
+import com.spectra.ai.cloud.CloudCoachingManager
 import com.spectra.ai.model.*
 import com.spectra.core.model.CameraMode
 import com.spectra.core.model.CameraSettings
@@ -18,7 +19,8 @@ class FrameAnalysisPipeline @Inject constructor(
     private val motionDetector: MotionDetector,
     private val distanceEstimator: DistanceEstimator,
     private val decisionEngine: DecisionEngine,
-    private val coachingEngine: CoachingEngine
+    private val coachingEngine: CoachingEngine,
+    val cloudCoachingManager: CloudCoachingManager
 ) {
     private val _analysis = MutableStateFlow(SceneAnalysis())
     val analysis: StateFlow<SceneAnalysis> = _analysis.asStateFlow()
@@ -35,6 +37,8 @@ class FrameAnalysisPipeline @Inject constructor(
 
     private val _coachingHint = MutableStateFlow<CoachingHint?>(null)
     val coachingHint: StateFlow<CoachingHint?> = _coachingHint.asStateFlow()
+
+    val cloudCoachingHint: StateFlow<CoachingHint?> = cloudCoachingManager.cloudHint
 
     private var initialized = false
 
@@ -78,12 +82,19 @@ class FrameAnalysisPipeline @Inject constructor(
             _lensRecommendation.value = decisionEngine.recommendLens(sceneAnalysis)
             _settingsProfile.value = decisionEngine.optimizeSettings(sceneAnalysis)
         }
+
+        val thumbSize = 32
+        val thumb = Bitmap.createScaledBitmap(bitmap, thumbSize, thumbSize, true)
+        val thumbPixels = IntArray(thumbSize * thumbSize)
+        thumb.getPixels(thumbPixels, 0, thumbSize, 0, 0, thumbSize, thumbSize)
+        cloudCoachingManager.onFrameAnalyzed(thumbPixels, sceneAnalysis.sceneType.label, sceneAnalysis.lighting.label)
     }
 
     fun release() {
         sceneClassifier.release()
         motionDetector.reset()
         coachingEngine.reset()
+        cloudCoachingManager.reset()
         initialized = false
     }
 }

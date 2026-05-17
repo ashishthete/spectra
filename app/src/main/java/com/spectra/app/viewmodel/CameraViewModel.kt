@@ -100,6 +100,27 @@ class CameraViewModel @Inject constructor(
                 )}
             }
         }
+
+        viewModelScope.launch {
+            pipeline.cloudCoachingHint.collect { hint ->
+                _hudState.update { it.copy(
+                    cloudCoachingText = hint?.text,
+                    cloudCoachingArrow = hint?.arrow?.name ?: "NONE"
+                )}
+            }
+        }
+
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(500)
+                if (pipeline.cloudCoachingManager.shouldQuery()) {
+                    val currentFrame = frameProvider.latestFrame
+                    if (currentFrame != null) {
+                        pipeline.cloudCoachingManager.queryCloud(currentFrame)
+                    }
+                }
+            }
+        }
     }
 
     private fun checkTipsVisibility(scene: SceneType, isStable: Boolean): Boolean {

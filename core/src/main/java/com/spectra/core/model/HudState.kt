@@ -18,5 +18,7 @@ data class HudState(
     val isBurstActive: Boolean = false,
     val lastCapturedUri: String? = null,
     val showTipsThumbnail: Boolean = false,
-    val showReferenceCard: Boolean = false
+    val showReferenceCard: Boolean = false,
+    val cloudCoachingText: String? = null,
+    val cloudCoachingArrow: String = "NONE"
 )

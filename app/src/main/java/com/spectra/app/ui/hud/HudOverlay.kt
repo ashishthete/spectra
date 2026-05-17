@@ -67,10 +67,12 @@ fun HudOverlay(
                         .padding(end = 24.dp)
                 )
 
-                val coaching = state.coachingText
+                val cloudCoaching = state.cloudCoachingText
+                val coaching = cloudCoaching ?: state.coachingText
+                val arrowStr = if (cloudCoaching != null) state.cloudCoachingArrow else state.coachingArrow
                 if (coaching != null) {
                     val arrow = try {
-                        ArrowDirection.valueOf(state.coachingArrow)
+                        ArrowDirection.valueOf(arrowStr)
                     } catch (_: Exception) {
                         ArrowDirection.NONE
                     }

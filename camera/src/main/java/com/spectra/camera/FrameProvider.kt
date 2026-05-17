@@ -15,6 +15,9 @@ class FrameProvider @Inject constructor() : ImageAnalysis.Analyzer {
     private val _frames = MutableSharedFlow<Bitmap>(extraBufferCapacity = 1)
     val frames: SharedFlow<Bitmap> = _frames.asSharedFlow()
 
+    var latestFrame: Bitmap? = null
+        private set
+
     private var frameCount = 0
     private val analyzeEveryN = 5
 
@@ -23,6 +26,7 @@ class FrameProvider @Inject constructor() : ImageAnalysis.Analyzer {
         if (frameCount % analyzeEveryN == 0) {
             try {
                 val bitmap = image.toBitmap()
+                latestFrame = bitmap
                 _frames.tryEmit(bitmap)
             } catch (_: Exception) {
             }
