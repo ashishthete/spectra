@@ -23,17 +23,27 @@ class SceneClassifier @Inject constructor(
     private var gpuDelegate: GpuDelegate? = null
     private val inputSize = 224
     private val labelMap = mutableListOf<SceneType>()
+    private var useGpu = false
 
     fun initialize() {
         loadLabels()
         try {
             val model = loadModelFile("scene_classifier.tflite")
-            gpuDelegate = GpuDelegate()
-            val options = Interpreter.Options().apply {
-                addDelegate(gpuDelegate)
-                setNumThreads(4)
+            try {
+                gpuDelegate = GpuDelegate()
+                val options = Interpreter.Options().apply {
+                    addDelegate(gpuDelegate)
+                    setNumThreads(4)
+                }
+                interpreter = Interpreter(model, options)
+                useGpu = true
+            } catch (_: Exception) {
+                gpuDelegate?.close()
+                gpuDelegate = null
+                val cpuOptions = Interpreter.Options().apply { setNumThreads(4) }
+                interpreter = Interpreter(model, cpuOptions)
+                useGpu = false
             }
-            interpreter = Interpreter(model, options)
         } catch (_: Exception) {
             interpreter = null
         }
@@ -44,27 +54,28 @@ class SceneClassifier @Inject constructor(
             return Pair(SceneType.PORTRAIT, 0.70f)
         }
 
-        val (baseScene, baseConf) = classifyBase(bitmap)
+        val (baseScene, baseConf) = classifyBase(bitmap, faceData)
         return applyFaceBoost(baseScene, baseConf, faceData)
     }
 
-    private fun classifyBase(bitmap: Bitmap): Pair<SceneType, Float> {
+    private fun classifyBase(bitmap: Bitmap, faceData: FaceData = FaceData.EMPTY): Pair<SceneType, Float> {
         val interp = interpreter
         if (interp != null) {
             val resized = Bitmap.createScaledBitmap(bitmap, inputSize, inputSize, true)
             val inputBuffer = bitmapToByteBuffer(resized)
+            resized.recycle()
 
             val outputArray = Array(1) { FloatArray(labelMap.size) }
             interp.run(inputBuffer, outputArray)
 
-            val scores = outputArray[0]
+            val scores = applySoftmax(outputArray[0])
             val maxIndex = scores.indices.maxByOrNull { scores[it] } ?: 0
             val confidence = scores[maxIndex]
             val sceneType = if (maxIndex < labelMap.size) labelMap[maxIndex] else SceneType.UNKNOWN
             return Pair(sceneType, confidence)
         }
 
-        return classifyHeuristic(bitmap)
+        return classifyHeuristic(bitmap, faceData)
     }
 
     private fun applyFaceBoost(scene: SceneType, confidence: Float, faceData: FaceData): Pair<SceneType, Float> {
@@ -84,47 +95,136 @@ class SceneClassifier @Inject constructor(
         }
     }
 
-    private fun classifyHeuristic(bitmap: Bitmap): Pair<SceneType, Float> {
-        val sample = Bitmap.createScaledBitmap(bitmap, 32, 32, true)
-        val pixels = IntArray(32 * 32)
-        sample.getPixels(pixels, 0, 32, 0, 0, 32, 32)
-
-        var totalR = 0L; var totalG = 0L; var totalB = 0L
-        var greenCount = 0; var blueCount = 0; var warmCount = 0
-        var brightPixels = 0; var darkPixels = 0
-
-        for (pixel in pixels) {
-            val r = (pixel shr 16) and 0xFF
-            val g = (pixel shr 8) and 0xFF
-            val b = pixel and 0xFF
-            totalR += r; totalG += g; totalB += b
-            val lum = (0.299 * r + 0.587 * g + 0.114 * b)
-            if (lum > 200) brightPixels++
-            if (lum < 50) darkPixels++
-            if (g > r + 20 && g > b + 20) greenCount++
-            if (b > r + 30 && b > g + 10) blueCount++
-            if (r > b + 40 && r > 120) warmCount++
-        }
+    private fun classifyHeuristic(bitmap: Bitmap, faceData: FaceData = FaceData.EMPTY): Pair<SceneType, Float> {
+        val size = 48
+        val sample = Bitmap.createScaledBitmap(bitmap, size, size, true)
+        val pixels = IntArray(size * size)
+        sample.getPixels(pixels, 0, size, 0, 0, size, size)
+        sample.recycle()
 
         val n = pixels.size.toFloat()
-        val avgR = totalR / n; val avgG = totalG / n; val avgB = totalB / n
-        val avgLum = 0.299 * avgR + 0.587 * avgG + 0.114 * avgB
-        val greenRatio = greenCount / n
-        val blueRatio = blueCount / n
-        val warmRatio = warmCount / n
-        val brightRatio = brightPixels / n
-        val darkRatio = darkPixels / n
+        var totalR = 0L; var totalG = 0L; var totalB = 0L
+        var brightPixels = 0; var darkPixels = 0
+        var greenDominant = 0; var blueSkyLike = 0
+        var highSatCount = 0; var lowSatCount = 0
+        val lumValues = FloatArray(pixels.size)
 
-        return when {
-            darkRatio > 0.6 -> Pair(SceneType.INDOOR, 0.55f)
-            greenRatio > 0.3 -> Pair(SceneType.LANDSCAPE, 0.60f)
-            blueRatio > 0.25 -> Pair(SceneType.LANDSCAPE, 0.55f)
-            warmRatio > 0.3 && avgLum > 100 -> Pair(SceneType.FOOD, 0.50f)
-            brightRatio > 0.5 -> Pair(SceneType.ARCHITECTURE, 0.45f)
-            avgLum < 80 -> Pair(SceneType.INDOOR, 0.50f)
-            avgLum in 80.0..160.0 -> Pair(SceneType.PORTRAIT, 0.45f)
-            else -> Pair(SceneType.INDOOR, 0.40f)
+        for (i in pixels.indices) {
+            val r = (pixels[i] shr 16) and 0xFF
+            val g = (pixels[i] shr 8) and 0xFF
+            val b = pixels[i] and 0xFF
+            totalR += r; totalG += g; totalB += b
+            val lum = (0.299f * r + 0.587f * g + 0.114f * b)
+            lumValues[i] = lum
+            if (lum > 210) brightPixels++
+            if (lum < 40) darkPixels++
+
+            val maxC = maxOf(r, g, b)
+            val minC = minOf(r, g, b)
+            val sat = if (maxC > 0) (maxC - minC) / maxC.toFloat() else 0f
+            if (sat > 0.4f) highSatCount++
+            if (sat < 0.15f) lowSatCount++
+
+            if (g > r + 15 && g > b + 15 && sat > 0.25f) greenDominant++
+            if (b > 150 && b > r + 40 && lum > 100 && sat > 0.2f) blueSkyLike++
         }
+
+        val avgLum = lumValues.average().toFloat()
+        val darkRatio = darkPixels / n
+        val brightRatio = brightPixels / n
+        val greenRatio = greenDominant / n
+        val skyRatio = blueSkyLike / n
+        val highSatRatio = highSatCount / n
+        val lowSatRatio = lowSatCount / n
+
+        var edgeSum = 0.0
+        var edgeCount = 0
+        for (y in 1 until size - 1) {
+            for (x in 1 until size - 1) {
+                val c = lumValues[y * size + x]
+                val t = lumValues[(y - 1) * size + x]
+                val b2 = lumValues[(y + 1) * size + x]
+                val l = lumValues[y * size + (x - 1)]
+                val r2 = lumValues[y * size + (x + 1)]
+                edgeSum += kotlin.math.abs(4 * c - t - b2 - l - r2)
+                edgeCount++
+            }
+        }
+        val edgeDensity = if (edgeCount > 0) (edgeSum / edgeCount).toFloat() else 0f
+
+        val topThird = lumValues.take(size * size / 3)
+        val bottomThird = lumValues.takeLast(size * size / 3)
+        val topAvgLum = if (topThird.isNotEmpty()) topThird.average().toFloat() else avgLum
+        val bottomAvgLum = if (bottomThird.isNotEmpty()) bottomThird.average().toFloat() else avgLum
+        val topBrighter = topAvgLum > bottomAvgLum + 30
+
+        val scores = mutableMapOf<SceneType, Float>()
+
+        if (faceData.hasFaces) {
+            val faceArea = faceData.faces.sumOf {
+                (it.bounds.width() * it.bounds.height()).toDouble()
+            }.toFloat()
+            scores[SceneType.PORTRAIT] = 0.55f + faceArea.coerceAtMost(0.3f)
+        }
+
+        if (darkRatio > 0.5f) {
+            scores[SceneType.NIGHT] = 0.45f + darkRatio * 0.2f
+            scores[SceneType.INDOOR] = 0.40f + darkRatio * 0.1f
+        }
+
+        if (greenRatio > 0.15f && topBrighter) {
+            scores[SceneType.LANDSCAPE] = 0.40f + greenRatio * 0.5f + (if (skyRatio > 0.1f) 0.15f else 0f)
+        }
+
+        if (skyRatio > 0.2f && topBrighter && greenRatio < 0.1f) {
+            scores[SceneType.ARCHITECTURE] = 0.40f + skyRatio * 0.3f
+        }
+
+        if (edgeDensity > 15f && lowSatRatio > 0.5f) {
+            scores[SceneType.DOCUMENT] = 0.45f + (edgeDensity / 40f).coerceAtMost(0.25f)
+        }
+
+        if (edgeDensity > 12f && highSatRatio > 0.3f && !faceData.hasFaces) {
+            val existing = scores[SceneType.ARCHITECTURE] ?: 0f
+            scores[SceneType.ARCHITECTURE] = maxOf(existing, 0.40f + edgeDensity / 50f)
+        }
+
+        val avgR = (totalR / n).toFloat()
+        val avgG = (totalG / n).toFloat()
+        val avgB = (totalB / n).toFloat()
+        val warmDominant = avgR > avgG + 20 && avgR > avgB + 30
+
+        if (warmDominant && highSatRatio > 0.25f && edgeDensity < 12f && !faceData.hasFaces) {
+            scores[SceneType.FOOD] = 0.45f + highSatRatio * 0.3f + (if (warmDominant) 0.1f else 0f)
+        }
+
+        if (!faceData.hasFaces && edgeDensity in 5f..15f && highSatRatio > 0.15f && avgLum in 80f..200f) {
+            val existing = scores[SceneType.PET] ?: 0f
+            scores[SceneType.PET] = maxOf(existing, 0.30f + highSatRatio * 0.2f)
+        }
+
+        if (!faceData.hasFaces && edgeDensity > 8f && brightRatio < 0.3f && darkRatio < 0.3f) {
+            val existing = scores[SceneType.ACTION] ?: 0f
+            scores[SceneType.ACTION] = maxOf(existing, 0.25f + edgeDensity / 60f)
+        }
+
+        if (avgLum in 60f..180f && lowSatRatio < 0.4f && !faceData.hasFaces && greenRatio < 0.15f) {
+            scores[SceneType.INDOOR] = maxOf(scores[SceneType.INDOOR] ?: 0f, 0.35f)
+        }
+
+        if (scores.isEmpty()) {
+            scores[SceneType.INDOOR] = 0.35f
+        }
+
+        val best = scores.maxByOrNull { it.value }!!
+        return Pair(best.key, best.value.coerceAtMost(0.75f))
+    }
+
+    private fun applySoftmax(input: FloatArray): FloatArray {
+        val maxVal = input.max()
+        val exps = FloatArray(input.size) { kotlin.math.exp((input[it] - maxVal).toDouble()).toFloat() }
+        val sum = exps.sum()
+        return FloatArray(exps.size) { exps[it] / sum }
     }
 
     private fun bitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
