@@ -37,6 +37,9 @@ class SpectraCameraController @Inject constructor(
     private val _isReady = MutableStateFlow(false)
     val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
 
+    private var _isFrontCamera = MutableStateFlow(false)
+    val isFrontCamera: StateFlow<Boolean> = _isFrontCamera.asStateFlow()
+
     fun initialize(lifecycleOwner: LifecycleOwner, previewView: PreviewView) {
         this.lifecycleOwner = lifecycleOwner
         this.previewView = previewView
@@ -58,6 +61,50 @@ class SpectraCameraController @Inject constructor(
     fun cycleLens() {
         val next = lensManager.getNextLens(_activeLens.value)
         switchLens(next)
+    }
+
+    fun flipCamera() {
+        _isFrontCamera.value = !_isFrontCamera.value
+        if (_isFrontCamera.value) {
+            bindFrontCamera()
+        } else {
+            bindCamera(_activeLens.value)
+        }
+    }
+
+    private fun bindFrontCamera() {
+        val provider = cameraProvider ?: return
+        val owner = lifecycleOwner ?: return
+        val view = previewView ?: return
+
+        val frontId = lensManager.getFrontCameraId() ?: return
+
+        provider.unbindAll()
+
+        val cameraSelector = CameraSelector.Builder()
+            .addCameraFilter { cameras ->
+                cameras.filter {
+                    Camera2CameraInfo.from(it).cameraId == frontId
+                }
+            }
+            .build()
+
+        val preview = Preview.Builder().build().also {
+            it.surfaceProvider = view.surfaceProvider
+        }
+
+        imageCapture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setTargetRotation(Surface.ROTATION_0)
+            .build()
+
+        val imageAnalysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also { it.setAnalyzer({ it.run() }, frameProvider) }
+
+        camera = provider.bindToLifecycle(owner, cameraSelector, preview, imageCapture, imageAnalysis)
+        _isReady.value = true
     }
 
     private fun bindCamera(lens: LensId) {

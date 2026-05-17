@@ -14,6 +14,7 @@ class LensManager @Inject constructor(
 ) {
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     private val lensMap = mutableMapOf<LensId, String>()
+    private var frontCameraId: String? = null
 
     fun initialize() {
         val cameraIds = cameraManager.cameraIdList
@@ -31,6 +32,15 @@ class LensManager @Inject constructor(
                 lensMap[lensId] = id
             }
         }
+
+        for (id in cameraIds) {
+            val chars = cameraManager.getCameraCharacteristics(id)
+            val facing = chars.get(CameraCharacteristics.LENS_FACING)
+            if (facing == CameraCharacteristics.LENS_FACING_FRONT) {
+                frontCameraId = id
+                break
+            }
+        }
     }
 
     private fun matchFocalToLens(focalLength: Float): LensId? = when {
@@ -44,6 +54,9 @@ class LensManager @Inject constructor(
     fun getCameraId(lens: LensId): String? = lensMap[lens]
 
     fun getAvailableLenses(): List<LensId> = lensMap.keys.sortedBy { it.zoomFactor }
+
+    fun getFrontCameraId(): String? = frontCameraId
+    fun hasFrontCamera(): Boolean = frontCameraId != null
 
     fun getNextLens(current: LensId): LensId {
         val available = getAvailableLenses()

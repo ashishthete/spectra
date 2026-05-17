@@ -1,5 +1,8 @@
 package com.spectra.app.ui.viewfinder
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.MediaStore
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -66,7 +69,7 @@ fun ViewfinderScreen(
             onModeSelected = { viewModel.setMode(it) },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 96.dp)
+                .padding(bottom = 120.dp)
         )
 
         ProModePanel(
@@ -87,13 +90,23 @@ fun ViewfinderScreen(
 
         CaptureControls(
             activeLens = hudState.activeLens,
+            lastCapturedUri = hudState.lastCapturedUri,
+            isFrontCamera = hudState.isFrontCamera,
             onShutterTap = { viewModel.capturePhoto() },
             onBurstStart = { },
             onBurstEnd = { },
             onLensCycle = { viewModel.cycleLens() },
+            onGalleryClick = {
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    type = "image/*"
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                try { context.startActivity(intent) } catch (_: Exception) { }
+            },
+            onFlipCamera = { viewModel.flipCamera() },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 24.dp)
+                .padding(bottom = 32.dp)
         )
 
         val tip = currentTip

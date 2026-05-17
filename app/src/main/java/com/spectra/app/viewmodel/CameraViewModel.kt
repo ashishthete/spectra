@@ -46,6 +46,12 @@ class CameraViewModel @Inject constructor(
         pipeline.initialize()
 
         viewModelScope.launch {
+            cameraController.isFrontCamera.collect { isFront ->
+                _hudState.update { it.copy(isFrontCamera = isFront) }
+            }
+        }
+
+        viewModelScope.launch {
             cameraController.activeLens.collect { lens ->
                 _hudState.update { it.copy(
                     activeLens = lens,
@@ -147,6 +153,7 @@ class CameraViewModel @Inject constructor(
     }
 
     fun cycleLens() { cameraController.cycleLens() }
+    fun flipCamera() { cameraController.flipCamera() }
     fun switchLens(lens: LensId) { cameraController.switchLens(lens) }
 
     fun setMode(mode: CameraMode) {

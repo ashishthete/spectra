@@ -22,5 +22,6 @@ data class HudState(
     val cloudCoachingText: String? = null,
     val cloudCoachingArrow: String = "NONE",
     val aiRecommendedSettings: CameraSettings = CameraSettings(),
-    val isManualOverride: Boolean = false
+    val isManualOverride: Boolean = false,
+    val isFrontCamera: Boolean = false
 )
