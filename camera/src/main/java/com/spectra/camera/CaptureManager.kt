@@ -24,7 +24,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -46,30 +45,8 @@ class CaptureManager @Inject constructor(
         style: PhotoStyle = PhotoStyle.NATURAL,
         isFrontCamera: Boolean = false
     ): String {
-        val frameCount = if (isFrontCamera) 3 else 1
-        return if (frameCount > 1) {
-            captureMultiFrame(imageCapture, frameCount, beautyLevel, style, isFrontCamera)
-        } else {
-            captureSingleFrame(imageCapture, beautyLevel, style, isFrontCamera)
-        }
-    }
-
-    private suspend fun captureSingleFrame(
-        imageCapture: ImageCapture,
-        beautyLevel: Int,
-        style: PhotoStyle,
-        isFrontCamera: Boolean
-    ): String {
-        val savedUri = saveToMediaStore(imageCapture)
-        if (savedUri.isNotEmpty()) {
-            val needsPostProcess = beautyLevel > 0 || style != PhotoStyle.NATURAL || isFrontCamera
-            if (needsPostProcess) {
-                withContext(Dispatchers.IO) {
-                    applyPostProcess(Uri.parse(savedUri), beautyLevel, style, isFrontCamera)
-                }
-            }
-        }
-        return savedUri
+        val frameCount = if (isFrontCamera) 3 else 2
+        return captureMultiFrame(imageCapture, frameCount, beautyLevel, style, isFrontCamera)
     }
 
     private suspend fun captureMultiFrame(
@@ -208,38 +185,6 @@ class CaptureManager @Inject constructor(
 
             Log.d("CaptureManager", "Multi-frame photo saved: $uri")
             uri.toString()
-        }
-    }
-
-    private suspend fun saveToMediaStore(imageCapture: ImageCapture): String {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-            .format(System.currentTimeMillis())
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "SPECTRA_$timestamp")
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/Spectra")
-        }
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(
-            context.contentResolver,
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            contentValues
-        ).build()
-
-        return suspendCancellableCoroutine { continuation ->
-            imageCapture.takePicture(
-                outputOptions, executor,
-                object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                        val uri = output.savedUri?.toString() ?: ""
-                        Log.d("CaptureManager", "Photo saved: $uri")
-                        continuation.resume(uri)
-                    }
-                    override fun onError(exception: ImageCaptureException) {
-                        Log.e("CaptureManager", "Capture failed", exception)
-                        continuation.resumeWithException(exception)
-                    }
-                }
-            )
         }
     }
 
