@@ -21,22 +21,12 @@ class FrameProvider @Inject constructor() : ImageAnalysis.Analyzer {
     override fun analyze(image: ImageProxy) {
         frameCount++
         if (frameCount % analyzeEveryN == 0) {
-            val bitmap = image.toBitmap()
-            if (bitmap != null) {
+            try {
+                val bitmap = image.toBitmap()
                 _frames.tryEmit(bitmap)
+            } catch (_: Exception) {
             }
         }
         image.close()
-    }
-
-    private fun ImageProxy.toBitmap(): Bitmap? {
-        return try {
-            val buffer = planes[0].buffer
-            val bytes = ByteArray(buffer.remaining())
-            buffer.get(bytes)
-            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        } catch (_: Exception) {
-            null
-        }
     }
 }

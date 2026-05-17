@@ -25,13 +25,17 @@ class SceneClassifier @Inject constructor(
 
     fun initialize() {
         loadLabels()
-        val model = loadModelFile("scene_classifier.tflite")
-        gpuDelegate = GpuDelegate()
-        val options = Interpreter.Options().apply {
-            addDelegate(gpuDelegate)
-            setNumThreads(4)
+        try {
+            val model = loadModelFile("scene_classifier.tflite")
+            gpuDelegate = GpuDelegate()
+            val options = Interpreter.Options().apply {
+                addDelegate(gpuDelegate)
+                setNumThreads(4)
+            }
+            interpreter = Interpreter(model, options)
+        } catch (_: Exception) {
+            interpreter = null
         }
-        interpreter = Interpreter(model, options)
     }
 
     fun classify(bitmap: Bitmap): Pair<SceneType, Float> {
