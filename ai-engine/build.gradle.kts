@@ -24,4 +24,6 @@ android {
 dependencies {
     implementation(project(":core"))
     implementation(libs.coroutines.core)
+    testImplementation(libs.junit)
+    testImplementation(libs.truth)
 }
