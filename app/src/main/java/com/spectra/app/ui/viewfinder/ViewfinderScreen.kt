@@ -20,6 +20,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.material3.Text
 import com.spectra.app.ui.controls.CaptureControls
 import com.spectra.app.ui.controls.ModeSelector
 import com.spectra.app.ui.pro.ProModePanel
@@ -28,6 +32,7 @@ import com.spectra.app.ui.controls.BeautyToggle
 import com.spectra.app.ui.hud.BeautyOverlay
 import com.spectra.app.ui.hud.HudOverlay
 import com.spectra.app.ui.theme.HudColors
+import com.spectra.app.ui.theme.HudTypography
 import com.spectra.app.ui.tips.ReferenceCard
 import com.spectra.app.viewmodel.CameraViewModel
 
@@ -37,6 +42,7 @@ fun ViewfinderScreen(
 ) {
     val hudState by viewModel.hudState.collectAsState()
     val currentTip by viewModel.currentTip.collectAsState()
+    val cameraReady by viewModel.cameraController.isReady.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
 
@@ -123,6 +129,18 @@ fun ViewfinderScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 32.dp)
         )
+
+        AnimatedVisibility(
+            visible = !cameraReady,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            Text(
+                text = "INITIALIZING CAMERA...",
+                style = HudTypography.readoutLarge
+            )
+        }
 
         val tip = currentTip
         if (tip != null) {
