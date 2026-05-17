@@ -57,7 +57,7 @@ class CameraViewModel @Inject constructor(
 
         viewModelScope.launch {
             frameProvider.frames.collect { bitmap ->
-                pipeline.analyzeFrame(bitmap)
+                pipeline.analyzeFrame(bitmap, mode = _hudState.value.mode)
             }
         }
 
@@ -89,6 +89,15 @@ class CameraViewModel @Inject constructor(
                 if (_hudState.value.mode != CameraMode.PRO) {
                     _hudState.update { it.copy(settings = profile.settings) }
                 }
+            }
+        }
+
+        viewModelScope.launch {
+            pipeline.coachingHint.collect { hint ->
+                _hudState.update { it.copy(
+                    coachingText = hint?.text,
+                    coachingArrow = hint?.arrow?.name ?: "NONE"
+                )}
             }
         }
     }
