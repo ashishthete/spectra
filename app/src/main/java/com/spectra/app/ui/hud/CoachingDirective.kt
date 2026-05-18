@@ -23,6 +23,8 @@ fun CoachingDirective(
     text: String,
     arrowDirection: ArrowDirection,
     onDismiss: () -> Unit,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "coaching")
@@ -60,6 +62,19 @@ fun CoachingDirective(
             if (arrowDirection == ArrowDirection.RIGHT) {
                 Spacer(modifier = Modifier.width(6.dp))
                 ArrowText(symbol = "→", alpha = arrowAlpha)
+            }
+
+            if (actionLabel != null && onAction != null) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = actionLabel,
+                    style = HudTypography.coaching,
+                    color = HudColors.accent,
+                    modifier = Modifier
+                        .background(HudColors.accent.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                        .clickable { onAction() }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                )
             }
         }
 

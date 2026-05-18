@@ -31,6 +31,7 @@ fun HudOverlay(
     state: HudState,
     onCoachingDismiss: () -> Unit,
     onTipsClick: () -> Unit,
+    onCoachingAction: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -189,6 +190,8 @@ fun HudOverlay(
                         text = coaching,
                         arrowDirection = arrow,
                         onDismiss = onCoachingDismiss,
+                        actionLabel = state.coachingActionLabel,
+                        onAction = if (state.coachingActionLabel != null) onCoachingAction else null,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .padding(bottom = 250.dp)

@@ -163,7 +163,8 @@ class CameraViewModel @Inject constructor(
                     focusDistanceDiopters = meta.actualFocusDistance,
                     exposureTimeNs = meta.actualShutterSpeedNs,
                     iso = if (meta.actualIso > 0) meta.actualIso else 100,
-                    colorTemperature = if (meta.actualColorTemperature > 0) meta.actualColorTemperature else 5500
+                    colorTemperature = if (meta.actualColorTemperature > 0) meta.actualColorTemperature else 5500,
+                    rollAngleDegrees = meta.levelAngle
                 )
                 hdrFrameCounter++
                 if (hdrFrameCounter % 10 == 0) {
@@ -288,7 +289,20 @@ class CameraViewModel @Inject constructor(
             pipeline.coachingHint.collect { hint ->
                 _hudState.update { it.copy(
                     coachingText = hint?.text,
-                    coachingArrow = hint?.arrow?.name ?: "NONE"
+                    coachingArrow = hint?.arrow?.name ?: "NONE",
+                    coachingActionLabel = hint?.action?.label,
+                    coachingActionType = when (hint?.action) {
+                        is com.spectra.ai.model.CoachingAction.SwitchLens -> "SWITCH_LENS"
+                        is com.spectra.ai.model.CoachingAction.EnableBurst -> "ENABLE_BURST"
+                        is com.spectra.ai.model.CoachingAction.SwitchPreset -> "SWITCH_PRESET"
+                        null -> null
+                    },
+                    coachingActionPayload = when (val a = hint?.action) {
+                        is com.spectra.ai.model.CoachingAction.SwitchLens -> a.lensId.name
+                        is com.spectra.ai.model.CoachingAction.SwitchPreset -> a.preset.name
+                        is com.spectra.ai.model.CoachingAction.EnableBurst -> null
+                        null -> null
+                    }
                 )}
             }
         }
@@ -569,6 +583,29 @@ class CameraViewModel @Inject constructor(
         )}
     }
 
+    fun executeCoachingAction() {
+        val state = _hudState.value
+        val type = state.coachingActionType ?: return
+        val payload = state.coachingActionPayload
+
+        when (type) {
+            "SWITCH_LENS" -> {
+                val lens = payload?.let { name ->
+                    try { LensId.valueOf(name) } catch (_: Exception) { null }
+                }
+                if (lens != null) switchLens(lens)
+            }
+            "ENABLE_BURST" -> startBurst()
+            "SWITCH_PRESET" -> {
+                val preset = payload?.let { name ->
+                    try { CameraPreset.valueOf(name) } catch (_: Exception) { null }
+                }
+                if (preset != null) setPreset(preset)
+            }
+        }
+        dismissCoaching()
+    }
+
     fun updateProSetting(
         iso: Int? = null,
         shutterSpeedDenominator: Int? = null,
@@ -701,7 +738,8 @@ class CameraViewModel @Inject constructor(
                 state.photoStyle,
                 state.isFrontCamera,
                 state.isHdrActive,
-                lastDetectedFaceRects
+                lastDetectedFaceRects,
+                processing = state.processing
             )
 
             _hudState.update { it.copy(
@@ -723,7 +761,8 @@ class CameraViewModel @Inject constructor(
                         state.isFrontCamera,
                         state.isHdrActive,
                         lastDetectedFaceRects,
-                        isPortraitMode = state.mode == CameraMode.PORT
+                        isPortraitMode = state.mode == CameraMode.PORT,
+                        processing = state.processing
                     )
                     _hudState.update { it.copy(
                         aiEnhancedUri = processedUri,

@@ -178,7 +178,8 @@ fun ViewfinderScreen(
         HudOverlay(
             state = hudState,
             onCoachingDismiss = { viewModel.dismissCoaching() },
-            onTipsClick = { viewModel.showReferenceCard() }
+            onTipsClick = { viewModel.showReferenceCard() },
+            onCoachingAction = { viewModel.executeCoachingAction() }
         )
 
         TopControlBar(

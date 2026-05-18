@@ -22,6 +22,7 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import com.spectra.core.model.PhotoStyle
+import com.spectra.core.model.ProcessingParams
 import com.spectra.core.model.SceneType
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -95,7 +96,8 @@ class CaptureManager @Inject constructor(
         style: PhotoStyle = PhotoStyle.NATURAL,
         isFrontCamera: Boolean = false,
         isHdr: Boolean = false,
-        faceRects: List<RectF> = emptyList()
+        faceRects: List<RectF> = emptyList(),
+        processing: ProcessingParams = ProcessingParams()
     ): SmartCaptureResult {
         Log.d("CaptureManager", "Smart capture: 5 frames")
         val frames = mutableListOf<Pair<ByteArray, Int>>()
@@ -134,7 +136,8 @@ class CaptureManager @Inject constructor(
         isFrontCamera: Boolean = false,
         isHdr: Boolean = false,
         faceRects: List<RectF> = emptyList(),
-        isPortraitMode: Boolean = false
+        isPortraitMode: Boolean = false,
+        processing: ProcessingParams = ProcessingParams()
     ): String {
         return withContext(Dispatchers.IO) {
             val sourceUri = Uri.parse(rawUri)
@@ -157,7 +160,7 @@ class CaptureManager @Inject constructor(
 
             val copyUri = saveJpegToMediaStore(rawBytes, rotation)
             if (copyUri.isNotEmpty()) {
-                applyPostProcess(Uri.parse(copyUri), beautyLevel, style, isFrontCamera, isHdr, faceRects, isPortraitMode)
+                applyPostProcess(Uri.parse(copyUri), beautyLevel, style, isFrontCamera, isHdr, faceRects, isPortraitMode, processing = processing)
             }
             Log.d("CaptureManager", "Processed copy saved: $copyUri")
             copyUri
@@ -709,7 +712,7 @@ class CaptureManager @Inject constructor(
         }
     }
 
-    private fun applyPostProcess(uri: Uri, beautyLevel: Int, style: PhotoStyle, isFrontCamera: Boolean = false, isHdr: Boolean = false, faceRects: List<RectF> = emptyList(), isPortraitMode: Boolean = false, sceneType: SceneType = SceneType.UNKNOWN, currentIso: Int = 100) {
+    private fun applyPostProcess(uri: Uri, beautyLevel: Int, style: PhotoStyle, isFrontCamera: Boolean = false, isHdr: Boolean = false, faceRects: List<RectF> = emptyList(), isPortraitMode: Boolean = false, sceneType: SceneType = SceneType.UNKNOWN, currentIso: Int = 100, processing: ProcessingParams = ProcessingParams()) {
         try {
             val exifStream = context.contentResolver.openInputStream(uri) ?: return
             val exif = ExifInterface(exifStream)
