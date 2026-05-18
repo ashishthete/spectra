@@ -1802,6 +1802,15 @@ class CaptureManager @Inject constructor(
             bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
         }
 
+        fun beautyBilateralRadius(beautyLevel: Int): Int {
+            return when (beautyLevel) {
+                1 -> 3
+                2 -> 5
+                3 -> 8
+                else -> 0
+            }
+        }
+
         fun applyLabBeauty(
             bitmap: android.graphics.Bitmap,
             canvas: android.graphics.Canvas,
