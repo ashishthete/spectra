@@ -40,6 +40,8 @@ dependencies {
     implementation(libs.lifecycle.runtime)
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
 
     testImplementation(libs.junit)
     testImplementation(libs.truth)

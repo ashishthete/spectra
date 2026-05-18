@@ -1,0 +1,12 @@
+{
+    "exposureCompensation": 0.2,
+    "colorTemperatureOffset": -100,
+    "redGain": 0.98,
+    "greenGain": 1.0,
+    "blueGain": 1.02,
+    "sharpnessMultiplier": 0.9,
+    "noiseFloorOffset": 0.005,
+    "vignetteStrength": 0.85,
+    "wideDistortionK1": -0.012,
+    "maxUsableIso": 3200
+}
