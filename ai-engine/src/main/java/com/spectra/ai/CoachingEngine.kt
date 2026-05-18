@@ -2,7 +2,9 @@ package com.spectra.ai
 
 import com.spectra.ai.model.*
 import com.spectra.ai.model.CompositionResult
+import com.spectra.ai.model.CoachingAction
 import com.spectra.core.model.CameraPreset
+import com.spectra.core.model.LensId
 import com.spectra.core.model.SceneType
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -60,11 +62,21 @@ class CoachingEngine @Inject constructor() {
     private fun motionHint(analysis: SceneAnalysis, preset: CameraPreset): CoachingHint {
         return when (preset) {
             CameraPreset.ACTION ->
-                CoachingHint("Track the action — hold shutter for burst", ArrowDirection.NONE, priority = 8)
+                CoachingHint(
+                    "Track the action — hold shutter for burst",
+                    ArrowDirection.NONE,
+                    priority = 8,
+                    action = CoachingAction.EnableBurst
+                )
             CameraPreset.MACRO ->
                 CoachingHint("Too much movement for macro — stabilize first", ArrowDirection.STEADY, priority = 9)
             else ->
-                CoachingHint("Movement detected — hold shutter for burst", ArrowDirection.NONE, priority = 7)
+                CoachingHint(
+                    "Movement detected — hold shutter for burst",
+                    ArrowDirection.NONE,
+                    priority = 7,
+                    action = CoachingAction.EnableBurst
+                )
         }
     }
 
@@ -130,7 +142,12 @@ class CoachingEngine @Inject constructor() {
             analysis.lighting == LightingCondition.GOLDEN_HOUR ->
                 CoachingHint("Golden hour — look for long shadows and warm tones", ArrowDirection.NONE, priority = 4)
             analysis.lighting == LightingCondition.LOW_LIGHT ->
-                CoachingHint("Low light — hold steady for best results", ArrowDirection.STEADY, priority = 5)
+                CoachingHint(
+                    "Low light — try Night mode for best results",
+                    ArrowDirection.STEADY,
+                    priority = 5,
+                    action = CoachingAction.SwitchPreset(CameraPreset.NIGHT)
+                )
             else -> null
         }
     }
@@ -147,7 +164,12 @@ class CoachingEngine @Inject constructor() {
             faces.isGroupShot ->
                 CoachingHint("Make sure no one is cut off at the edges", ArrowDirection.NONE, priority = 3)
             analysis.distanceRange == DistanceRange.FAR ->
-                CoachingHint("Move closer — show head and shoulders", ArrowDirection.NONE, priority = 7)
+                CoachingHint(
+                    "Move closer — or try 3x telephoto",
+                    ArrowDirection.NONE,
+                    priority = 7,
+                    action = CoachingAction.SwitchLens(LensId.TELEPHOTO_3X)
+                )
             analysis.distanceRange == DistanceRange.MACRO || analysis.distanceRange == DistanceRange.NEAR ->
                 CoachingHint("Step back slightly for a flattering perspective", ArrowDirection.NONE, priority = 6)
             analysis.lighting == LightingCondition.HARSH_MIDDAY ->
