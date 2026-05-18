@@ -122,6 +122,40 @@ object ToneCurveEngine {
         }
     }
 
+    data class HighlightParams(
+        val shoulderStart: Int = 200,
+        val maxOutput: Int = 255,
+        val strength: Float = 0f
+    )
+
+    fun styleHighlightParams(style: com.spectra.core.model.PhotoStyle): HighlightParams {
+        return when (style) {
+            com.spectra.core.model.PhotoStyle.NATURAL -> HighlightParams(shoulderStart = 200, maxOutput = 255, strength = 0f)
+            com.spectra.core.model.PhotoStyle.VIVID -> HighlightParams(shoulderStart = 210, maxOutput = 252, strength = 0.3f)
+            com.spectra.core.model.PhotoStyle.WARM -> HighlightParams(shoulderStart = 205, maxOutput = 250, strength = 0.4f)
+            com.spectra.core.model.PhotoStyle.FILM -> HighlightParams(shoulderStart = 190, maxOutput = 240, strength = 0.8f)
+            com.spectra.core.model.PhotoStyle.CINEMATIC -> HighlightParams(shoulderStart = 195, maxOutput = 242, strength = 0.7f)
+        }
+    }
+
+    fun highlightShoulder(input: Int, shoulderStart: Int, maxOutput: Int, strength: Float): Int {
+        if (strength <= 0f || input <= shoulderStart) return input
+        // t: normalized position within [shoulderStart, 255]
+        val range = (255 - shoulderStart).coerceAtLeast(1)
+        val t = (input - shoulderStart).toFloat() / range
+        // Bezier shoulder: convex curve (t²) compresses highlights — maps [shoulderStart,255]
+        // to [shoulderStart,maxOutput] with the curve easing in quickly and rolling off at top
+        val tEased = t * t
+        val shoulderOutput = shoulderStart + (maxOutput - shoulderStart) * tEased
+        // Blend between linear (identity) and full shoulder compression
+        val result = input + strength * (shoulderOutput - input)
+        return result.toInt().coerceIn(shoulderStart, maxOutput)
+    }
+
+    fun buildHighlightRolloffCurve(shoulderStart: Int, maxOutput: Int, strength: Float): IntArray {
+        return IntArray(256) { i -> highlightShoulder(i, shoulderStart, maxOutput, strength) }
+    }
+
     fun apply(bitmap: Bitmap, style: PhotoStyle) {
         if (style == PhotoStyle.NATURAL) return
 
