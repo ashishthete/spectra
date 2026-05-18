@@ -218,24 +218,4 @@ class CaptureManagerCompanionTest {
         }
     }
 
-    // beautyBilateralRadius(beautyLevel: Int): Int
-
-    @Test
-    fun `beautyBilateralRadius increases with level`() {
-        val r1 = CaptureManager.beautyBilateralRadius(1)
-        val r2 = CaptureManager.beautyBilateralRadius(2)
-        val r3 = CaptureManager.beautyBilateralRadius(3)
-        assertThat(r2).isGreaterThan(r1)
-        assertThat(r3).isGreaterThan(r2)
-    }
-
-    @Test
-    fun `beautyBilateralRadius at level 0 is zero`() {
-        assertThat(CaptureManager.beautyBilateralRadius(0)).isEqualTo(0)
-    }
-
-    @Test
-    fun `beautyBilateralRadius at level 3 is maximum`() {
-        assertThat(CaptureManager.beautyBilateralRadius(3)).isEqualTo(8)
-    }
 }

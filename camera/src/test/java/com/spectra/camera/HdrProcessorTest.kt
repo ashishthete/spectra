@@ -231,28 +231,27 @@ class HdrProcessorTest {
     fun `detectGhostRegions with significantly different frames marks ghosts`() {
         val w = 8; val h = 8; val n = w * h
 
-        // Frame 1: left half bright, right half dark
+        // Frame 1: mostly bright with a dark patch (top-left 2x2)
         val frame1 = IntArray(n) { i ->
-            val x = i % w
-            if (x < 4) {
-                (0xFF shl 24) or (200 shl 16) or (200 shl 8) or 200
-            } else {
+            val x = i % w; val y = i / w
+            if (x < 2 && y < 2) {
                 (0xFF shl 24) or (20 shl 16) or (20 shl 8) or 20
+            } else {
+                (0xFF shl 24) or (200 shl 16) or (200 shl 8) or 200
             }
         }
 
-        // Frame 2: inverted - left half dark, right half bright
+        // Frame 2: mostly dark with a bright patch (top-left 2x2)
         val frame2 = IntArray(n) { i ->
-            val x = i % w
-            if (x < 4) {
-                (0xFF shl 24) or (20 shl 16) or (20 shl 8) or 20
-            } else {
+            val x = i % w; val y = i / w
+            if (x < 2 && y < 2) {
                 (0xFF shl 24) or (200 shl 16) or (200 shl 8) or 200
+            } else {
+                (0xFF shl 24) or (20 shl 16) or (20 shl 8) or 20
             }
         }
 
         val mask = HdrProcessor.detectGhostRegions(listOf(frame1, frame2), w, h)
-        // With inverted brightness, MTBs will differ significantly
         val ghostCount = mask.count { it }
         assertThat(ghostCount).isGreaterThan(0)
     }
