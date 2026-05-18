@@ -10,5 +10,6 @@ enum class LightingCondition(val label: String) {
     LOW_LIGHT("LOW LIGHT"),
     ARTIFICIAL("ARTIFICIAL"),
     STUDIO("STUDIO"),
+    MIXED("MIXED"),
     UNKNOWN("—");
 }
