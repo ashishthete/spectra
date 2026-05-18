@@ -50,6 +50,37 @@ class HdrProcessor {
             val variance = ((r - mean) * (r - mean) + (g - mean) * (g - mean) + (b - mean) * (b - mean)) / 3f
             return kotlin.math.sqrt(variance.toDouble()).toFloat()
         }
+
+        fun computeBracketExposuresForHighlights(
+            baseExposureNs: Long,
+            baseIso: Int,
+            evBias: Float
+        ): List<Pair<Long, Int>> {
+            val biasedBase = if (evBias != 0f) {
+                (baseExposureNs / Math.pow(2.0, (-evBias).toDouble())).toLong().coerceAtLeast(1L)
+            } else {
+                baseExposureNs
+            }
+            val underExposure = biasedBase / 4
+            val overExposure = biasedBase * 4
+            return listOf(
+                Pair(underExposure, baseIso),
+                Pair(biasedBase, baseIso),
+                Pair(overExposure, baseIso)
+            )
+        }
+
+        fun computeHighlightEvBias(sceneContrast: Float): Float {
+            if (sceneContrast < 0.15f) return 0f
+            val normalized = ((sceneContrast - 0.15f) / 0.85f).coerceIn(0f, 1f)
+            return -(normalized * 1.0f).coerceIn(0f, 1.0f)
+        }
+
+        fun computeShadowBoostStrength(sceneContrast: Float): Float {
+            if (sceneContrast < 0.15f) return 0f
+            val normalized = ((sceneContrast - 0.15f) / 0.85f).coerceIn(0f, 1f)
+            return (normalized * 1.0f).coerceIn(0f, 1.0f)
+        }
     }
 
     fun mertensFusion(frames: List<IntArray>, width: Int, height: Int): IntArray {
