@@ -5,143 +5,99 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Outer glow ring (dim) -->
+    <!-- Outer lens bezel -->
     <path
-        android:pathData="M54,19a35,35 0,1 1,0 70a35,35 0,1 1,0 -70z"
-        android:strokeColor="#00442A"
-        android:strokeWidth="1"
+        android:pathData="M54,20a34,34 0,1 1,0 68a34,34 0,1 1,0 -68z"
+        android:strokeColor="#F0A830"
+        android:strokeWidth="2"
         android:fillColor="#00000000" />
 
-    <!-- Outer lens ring -->
+    <!-- Second ring (subtle) -->
     <path
-        android:pathData="M54,22a32,32 0,1 1,0 64a32,32 0,1 1,0 -64z"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="2.5"
+        android:pathData="M54,24a30,30 0,1 1,0 60a30,30 0,1 1,0 -60z"
+        android:strokeColor="#F0A830"
+        android:strokeWidth="0.8"
+        android:strokeAlpha="0.4"
         android:fillColor="#00000000" />
 
-    <!-- Aperture blade 1 (top) -->
+    <!-- Aperture blade 1 -->
     <path
-        android:pathData="M54,26 L62,40 L54,38z"
-        android:fillColor="#00CC6E"
-        android:fillAlpha="0.7" />
+        android:pathData="M54,28 L64,42 L54,40z"
+        android:fillColor="#F0A830"
+        android:fillAlpha="0.65" />
 
-    <!-- Aperture blade 2 (top-right) -->
+    <!-- Aperture blade 2 -->
     <path
-        android:pathData="M78,36 L68,50 L66,42z"
-        android:fillColor="#00CC6E"
-        android:fillAlpha="0.6" />
+        android:pathData="M75,35 L67,50 L72,43z"
+        android:fillColor="#F0A830"
+        android:fillAlpha="0.55" />
 
-    <!-- Aperture blade 3 (bottom-right) -->
+    <!-- Aperture blade 3 -->
     <path
-        android:pathData="M78,72 L64,64 L70,56z"
-        android:fillColor="#00CC6E"
-        android:fillAlpha="0.5" />
+        android:pathData="M80,54 L66,58 L72,52z"
+        android:fillColor="#F0A830"
+        android:fillAlpha="0.45" />
 
-    <!-- Aperture blade 4 (bottom) -->
+    <!-- Aperture blade 4 -->
     <path
-        android:pathData="M54,82 L46,68 L54,70z"
-        android:fillColor="#00CC6E"
-        android:fillAlpha="0.7" />
+        android:pathData="M75,73 L64,66 L70,62z"
+        android:fillColor="#F0A830"
+        android:fillAlpha="0.55" />
 
-    <!-- Aperture blade 5 (bottom-left) -->
+    <!-- Aperture blade 5 -->
     <path
-        android:pathData="M30,72 L40,58 L42,66z"
-        android:fillColor="#00CC6E"
-        android:fillAlpha="0.6" />
+        android:pathData="M54,80 L44,66 L54,68z"
+        android:fillColor="#F0A830"
+        android:fillAlpha="0.65" />
 
-    <!-- Aperture blade 6 (top-left) -->
+    <!-- Aperture blade 6 -->
     <path
-        android:pathData="M30,36 L44,44 L38,52z"
-        android:fillColor="#00CC6E"
-        android:fillAlpha="0.5" />
+        android:pathData="M33,73 L41,58 L36,65z"
+        android:fillColor="#F0A830"
+        android:fillAlpha="0.55" />
 
-    <!-- Inner aperture ring -->
+    <!-- Aperture blade 7 -->
     <path
-        android:pathData="M54,38a16,16 0,1 1,0 32a16,16 0,1 1,0 -32z"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="1.5"
+        android:pathData="M28,54 L42,50 L36,56z"
+        android:fillColor="#F0A830"
+        android:fillAlpha="0.45" />
+
+    <!-- Aperture blade 8 -->
+    <path
+        android:pathData="M33,35 L44,42 L38,46z"
+        android:fillColor="#F0A830"
+        android:fillAlpha="0.55" />
+
+    <!-- Inner aperture circle -->
+    <path
+        android:pathData="M54,39a15,15 0,1 1,0 30a15,15 0,1 1,0 -30z"
+        android:strokeColor="#F0A830"
+        android:strokeWidth="1.2"
         android:fillColor="#00000000" />
 
-    <!-- Inner glow circle -->
+    <!-- Glass element (inner glow) -->
     <path
         android:pathData="M54,44a10,10 0,1 1,0 20a10,10 0,1 1,0 -20z"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="0.8"
-        android:fillColor="#001A0E" />
+        android:fillColor="#1A0F00"
+        android:strokeColor="#F0A830"
+        android:strokeWidth="0.6"
+        android:strokeAlpha="0.5" />
 
     <!-- Center bright dot -->
     <path
         android:pathData="M54,51a3,3 0,1 1,0 6a3,3 0,1 1,0 -6z"
-        android:fillColor="#00FF88" />
+        android:fillColor="#F0A830" />
 
-    <!-- Crosshair — top -->
+    <!-- AI spark — top-right -->
     <path
-        android:pathData="M54,14 L54,26"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="1.5" />
-    <!-- Crosshair — bottom -->
-    <path
-        android:pathData="M54,82 L54,94"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="1.5" />
-    <!-- Crosshair — left -->
-    <path
-        android:pathData="M14,54 L26,54"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="1.5" />
-    <!-- Crosshair — right -->
-    <path
-        android:pathData="M82,54 L94,54"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="1.5" />
+        android:pathData="M76,26 L78,22 L80,26 L84,28 L80,30 L78,34 L76,30 L72,28z"
+        android:fillColor="#F0A830"
+        android:fillAlpha="0.8" />
 
-    <!-- Tick marks on crosshair -->
+    <!-- AI spark — small (bottom-left) -->
     <path
-        android:pathData="M52,18 L56,18"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="1" />
-    <path
-        android:pathData="M52,90 L56,90"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="1" />
-    <path
-        android:pathData="M18,52 L18,56"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="1" />
-    <path
-        android:pathData="M90,52 L90,56"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="1" />
+        android:pathData="M28,76 L29,74 L30,76 L32,77 L30,78 L29,80 L28,78 L26,77z"
+        android:fillColor="#F0A830"
+        android:fillAlpha="0.5" />
 
-    <!-- Corner brackets (top-left) -->
-    <path
-        android:pathData="M22,32 L22,22 L32,22"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="2.5"
-        android:fillColor="#00000000"
-        android:strokeLineCap="square" />
-
-    <!-- Corner brackets (top-right) -->
-    <path
-        android:pathData="M76,22 L86,22 L86,32"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="2.5"
-        android:fillColor="#00000000"
-        android:strokeLineCap="square" />
-
-    <!-- Corner brackets (bottom-left) -->
-    <path
-        android:pathData="M22,76 L22,86 L32,86"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="2.5"
-        android:fillColor="#00000000"
-        android:strokeLineCap="square" />
-
-    <!-- Corner brackets (bottom-right) -->
-    <path
-        android:pathData="M86,76 L86,86 L76,86"
-        android:strokeColor="#00FF88"
-        android:strokeWidth="2.5"
-        android:fillColor="#00000000"
-        android:strokeLineCap="square" />
 </vector>
