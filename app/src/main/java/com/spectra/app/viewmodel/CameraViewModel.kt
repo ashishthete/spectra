@@ -335,6 +335,10 @@ class CameraViewModel @Inject constructor(
                 }
             }
         }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            captureManager.initDepthModel()
+        }
     }
 
     @OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
@@ -941,5 +945,6 @@ class CameraViewModel @Inject constructor(
         levelSensor.stop()
         pipeline.release()
         cameraController.release()
+        captureManager.releaseDepthModel()
     }
 }
