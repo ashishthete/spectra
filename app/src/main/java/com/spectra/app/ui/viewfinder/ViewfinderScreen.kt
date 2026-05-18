@@ -55,6 +55,7 @@ import com.spectra.app.ui.hud.FocusPeakingOverlay
 import com.spectra.app.ui.hud.HudOverlay
 import com.spectra.app.ui.hud.ReviewOverlay
 import com.spectra.app.ui.hud.SmartReviewOverlay
+import com.spectra.app.ui.review.AiExplainerOverlay
 import com.spectra.app.ui.hud.ZebraOverlay
 import com.spectra.app.ui.pro.ProModePanel
 import com.spectra.app.ui.theme.HudColors
@@ -349,6 +350,14 @@ fun ViewfinderScreen(
                 onDismiss = { viewModel.dismissReferenceCard() }
             )
         }
+
+        AiExplainerOverlay(
+            explanation = hudState.captureExplanation,
+            isVisible = hudState.showAiExplainer && !hudState.showSmartReview,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 120.dp)
+        )
 
         ReviewOverlay(
             imageUri = hudState.reviewUri,
