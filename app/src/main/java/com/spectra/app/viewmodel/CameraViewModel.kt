@@ -193,12 +193,18 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch {
             pipeline.faceDetector.faceData.collect { faces ->
                 lastDetectedFaceRects = faces.faces.map { it.bounds }
-                _hudState.update { it.copy(
-                    faceCount = faces.faceCount,
-                    anyoneSmiling = faces.anyoneSmiling,
-                    allEyesOpen = faces.allEyesOpen,
-                    anyBlinking = faces.anyBlinking
-                )}
+                val state = _hudState.value
+                if (faces.faceCount != state.faceCount ||
+                    faces.anyoneSmiling != state.anyoneSmiling ||
+                    faces.allEyesOpen != state.allEyesOpen ||
+                    faces.anyBlinking != state.anyBlinking) {
+                    _hudState.update { it.copy(
+                        faceCount = faces.faceCount,
+                        anyoneSmiling = faces.anyoneSmiling,
+                        allEyesOpen = faces.allEyesOpen,
+                        anyBlinking = faces.anyBlinking
+                    )}
+                }
                 if (faces.hasFaces && !_hudState.value.aeAfLocked && !_hudState.value.isFrontCamera) {
                     cameraController.applyFaceMetering(faces.faces.map { it.bounds })
 
@@ -233,30 +239,43 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch {
             pipeline.analysis.collect { analysis ->
                 checkTipsVisibility(analysis.sceneType, analysis.isStable)
-                _hudState.update { it.copy(
-                    sceneLabel = if (analysis.isStable) analysis.sceneType.label else "",
-                    sceneConfidence = analysis.confidence,
-                    lightingLabel = analysis.lighting.label,
-                    motionLevel = analysis.motionLevel.barCount,
-                    distanceLabel = analysis.distanceRange.label
-                )}
+                val newLabel = if (analysis.isStable) analysis.sceneType.label else ""
+                val state = _hudState.value
+                if (newLabel != state.sceneLabel ||
+                    analysis.confidence != state.sceneConfidence ||
+                    analysis.lighting.label != state.lightingLabel ||
+                    analysis.motionLevel.barCount != state.motionLevel ||
+                    analysis.distanceRange.label != state.distanceLabel) {
+                    _hudState.update { it.copy(
+                        sceneLabel = newLabel,
+                        sceneConfidence = analysis.confidence,
+                        lightingLabel = analysis.lighting.label,
+                        motionLevel = analysis.motionLevel.barCount,
+                        distanceLabel = analysis.distanceRange.label
+                    )}
+                }
             }
         }
 
         viewModelScope.launch {
             pipeline.lensRecommendation.collect { rec ->
-                val active = _hudState.value.activeLens
-                val isFront = _hudState.value.isFrontCamera
+                val state = _hudState.value
+                val active = state.activeLens
+                val isFront = state.isFrontCamera
                 val changed = rec.recommended != lastRecommendedLens
                 lastRecommendedLens = rec.recommended
                 val hint = if (!isFront && changed && rec.recommended != active && rec.scores.getOrDefault(rec.recommended, 0f) > 0.85f) {
                     "Try ${rec.recommended.zoomLabel}"
                 } else null
-                _hudState.update { it.copy(
-                    recommendedLens = rec.recommended,
-                    lensMatchScores = rec.scores,
-                    lensHint = if (hint != null) hint else it.lensHint
-                )}
+                if (rec.recommended != state.recommendedLens ||
+                    rec.scores != state.lensMatchScores ||
+                    hint != null) {
+                    _hudState.update { it.copy(
+                        recommendedLens = rec.recommended,
+                        lensMatchScores = rec.scores,
+                        lensHint = if (hint != null) hint else it.lensHint
+                    )}
+                }
                 if (hint != null) {
                     lensHintJob?.cancel()
                     lensHintJob = viewModelScope.launch {
@@ -269,14 +288,22 @@ class CameraViewModel @Inject constructor(
 
         viewModelScope.launch {
             pipeline.settingsProfile.collect { profile ->
-                _hudState.update { state ->
-                    if (state.mode == CameraMode.PRO) {
-                        state.copy(aiRecommendedSettings = profile.settings)
-                    } else {
-                        state.copy(
-                            settings = profile.settings,
-                            aiRecommendedSettings = profile.settings
-                        )
+                val state = _hudState.value
+                val needsUpdate = if (state.mode == CameraMode.PRO) {
+                    profile.settings != state.aiRecommendedSettings
+                } else {
+                    profile.settings != state.settings || profile.settings != state.aiRecommendedSettings
+                }
+                if (needsUpdate) {
+                    _hudState.update { s ->
+                        if (s.mode == CameraMode.PRO) {
+                            s.copy(aiRecommendedSettings = profile.settings)
+                        } else {
+                            s.copy(
+                                settings = profile.settings,
+                                aiRecommendedSettings = profile.settings
+                            )
+                        }
                     }
                 }
                 if (_hudState.value.mode != CameraMode.PRO && profile.settings != lastAppliedSettings) {
@@ -290,38 +317,57 @@ class CameraViewModel @Inject constructor(
 
         viewModelScope.launch {
             pipeline.presetProfile.collect { profile ->
-                _hudState.update { it.copy(processing = profile.processing) }
+                if (profile.processing != _hudState.value.processing) {
+                    _hudState.update { it.copy(processing = profile.processing) }
+                }
             }
         }
 
         viewModelScope.launch {
             pipeline.coachingHint.collect { hint ->
-                _hudState.update { it.copy(
-                    coachingText = hint?.text,
-                    coachingArrow = hint?.arrow?.name ?: "NONE",
-                    coachingActionLabel = hint?.action?.label,
-                    coachingActionType = when (hint?.action) {
-                        is com.spectra.ai.model.CoachingAction.SwitchLens -> "SWITCH_LENS"
-                        is com.spectra.ai.model.CoachingAction.EnableBurst -> "ENABLE_BURST"
-                        is com.spectra.ai.model.CoachingAction.SwitchPreset -> "SWITCH_PRESET"
-                        null -> null
-                    },
-                    coachingActionPayload = when (val a = hint?.action) {
-                        is com.spectra.ai.model.CoachingAction.SwitchLens -> a.lensId.name
-                        is com.spectra.ai.model.CoachingAction.SwitchPreset -> a.preset.name
-                        is com.spectra.ai.model.CoachingAction.EnableBurst -> null
-                        null -> null
-                    }
-                )}
+                val newText = hint?.text
+                val newArrow = hint?.arrow?.name ?: "NONE"
+                val newActionLabel = hint?.action?.label
+                val newActionType = when (hint?.action) {
+                    is com.spectra.ai.model.CoachingAction.SwitchLens -> "SWITCH_LENS"
+                    is com.spectra.ai.model.CoachingAction.EnableBurst -> "ENABLE_BURST"
+                    is com.spectra.ai.model.CoachingAction.SwitchPreset -> "SWITCH_PRESET"
+                    null -> null
+                }
+                val newPayload = when (val a = hint?.action) {
+                    is com.spectra.ai.model.CoachingAction.SwitchLens -> a.lensId.name
+                    is com.spectra.ai.model.CoachingAction.SwitchPreset -> a.preset.name
+                    is com.spectra.ai.model.CoachingAction.EnableBurst -> null
+                    null -> null
+                }
+                val state = _hudState.value
+                if (newText != state.coachingText ||
+                    newArrow != state.coachingArrow ||
+                    newActionLabel != state.coachingActionLabel ||
+                    newActionType != state.coachingActionType ||
+                    newPayload != state.coachingActionPayload) {
+                    _hudState.update { it.copy(
+                        coachingText = newText,
+                        coachingArrow = newArrow,
+                        coachingActionLabel = newActionLabel,
+                        coachingActionType = newActionType,
+                        coachingActionPayload = newPayload
+                    )}
+                }
             }
         }
 
         viewModelScope.launch {
             pipeline.cloudCoachingHint.collect { hint ->
-                _hudState.update { it.copy(
-                    cloudCoachingText = hint?.text,
-                    cloudCoachingArrow = hint?.arrow?.name ?: "NONE"
-                )}
+                val newText = hint?.text
+                val newArrow = hint?.arrow?.name ?: "NONE"
+                val state = _hudState.value
+                if (newText != state.cloudCoachingText || newArrow != state.cloudCoachingArrow) {
+                    _hudState.update { it.copy(
+                        cloudCoachingText = newText,
+                        cloudCoachingArrow = newArrow
+                    )}
+                }
             }
         }
 
@@ -760,8 +806,12 @@ class CameraViewModel @Inject constructor(
 
             if (state.settings.captureRaw && result.allFrames.isNotEmpty()) {
                 viewModelScope.launch {
-                    val best = result.allFrames.maxBy { (jpeg, _) -> jpeg.size }
-                    captureManager.saveRawCopy(best.first, best.second)
+                    try {
+                        val best = result.allFrames.maxBy { (jpeg, _) -> jpeg.size }
+                        captureManager.saveRawCopy(best.first, best.second)
+                    } catch (e: Exception) {
+                        Log.w("CameraViewModel", "RAW save failed", e)
+                    }
                 }
             }
 
@@ -819,6 +869,11 @@ class CameraViewModel @Inject constructor(
         } catch (e: Exception) {
             Log.e("CameraViewModel", "Capture failed", e)
             _toastMessage.tryEmit("Capture failed: ${e.message}")
+            _hudState.update { it.copy(showCaptureFlash = false, isCapturing = false) }
+        } catch (oom: OutOfMemoryError) {
+            Log.e("CameraViewModel", "OOM during capture", oom)
+            System.gc()
+            _toastMessage.tryEmit("Out of memory — try again")
             _hudState.update { it.copy(showCaptureFlash = false, isCapturing = false) }
         } finally {
             _captureInProgress.value = false

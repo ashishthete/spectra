@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -91,6 +92,7 @@ fun ShutterButton(
             modifier = Modifier
                 .size(58.dp)
                 .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.85f))
                 .border(1.dp, HudColors.accentDim, CircleShape)
         )
 
