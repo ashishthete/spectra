@@ -87,68 +87,38 @@ class HdrProcessor {
             return abs(center * 4f - top - bottom - left - right)
         }
 
-        fun detectGhostRegions(frames: List<IntArray>, w: Int, h: Int): BooleanArray {
+        fun detectGhostRegions(frames: List<IntArray>, w: Int, h: Int, tileSize: Int = 16): BooleanArray {
             val n = w * h
             val ghostMask = BooleanArray(n)
             if (frames.size < 2) return ghostMask
 
-            // Compute luminance arrays for each frame
-            val luminances = frames.map { pixels ->
-                FloatArray(n) { i ->
-                    val r = ((pixels[i] shr 16) and 0xFF) / 255f
-                    val g = ((pixels[i] shr 8) and 0xFF) / 255f
-                    val b = (pixels[i] and 0xFF) / 255f
-                    0.299f * r + 0.587f * g + 0.114f * b
+            // Compute luminance for each frame
+            val lumFrames = frames.map { frame ->
+                IntArray(n) { i ->
+                    val r = (frame[i] shr 16) and 0xFF
+                    val g = (frame[i] shr 8) and 0xFF
+                    val b = frame[i] and 0xFF
+                    (r * 77 + g * 150 + b * 29) shr 8
                 }
             }
 
-            // Compute Median Threshold Bitmaps for each frame
-            val mtbs = luminances.map { lum ->
-                // Find median luminance
+            // Compute median threshold bitmaps
+            val mtbs = lumFrames.map { lum ->
                 val sorted = lum.copyOf()
                 sorted.sort()
                 val median = sorted[sorted.size / 2]
-                // MTB: pixel > median → true
-                BooleanArray(n) { i -> lum[i] > median }
+                BooleanArray(n) { lum[it] > median }
             }
 
-            // Use first frame as reference
+            // XOR reference MTB with others — high disagreement = ghost
             val refMtb = mtbs[0]
-
-            // XOR each frame's MTB with reference, accumulate ghost regions
-            for (f in 1 until mtbs.size) {
-                val frameMtb = mtbs[f]
-                for (i in 0 until n) {
-                    if (refMtb[i] != frameMtb[i]) {
-                        ghostMask[i] = true
-                    }
+            for (i in 1 until mtbs.size) {
+                for (px in refMtb.indices) {
+                    if (refMtb[px] != mtbs[i][px]) ghostMask[px] = true
                 }
             }
 
-            // Apply 5x5 dilation to expand ghost regions
-            val dilated = BooleanArray(n)
-            for (y in 0 until h) {
-                for (x in 0 until w) {
-                    if (dilated[y * w + x]) continue
-                    var found = false
-                    for (dy in -2..2) {
-                        if (found) break
-                        for (dx in -2..2) {
-                            val nx = x + dx
-                            val ny = y + dy
-                            if (nx in 0 until w && ny in 0 until h && ghostMask[ny * w + nx]) {
-                                found = true
-                                break
-                            }
-                        }
-                    }
-                    if (found) {
-                        dilated[y * w + x] = true
-                    }
-                }
-            }
-
-            return dilated
+            return ghostMask
         }
 
         fun computeShadowBoostStrength(sceneContrast: Float): Float {
@@ -165,11 +135,6 @@ class HdrProcessor {
 
         val n = width * height
         val weightMaps = Array(numFrames) { FloatArray(n) }
-
-        // Detect ghost regions across frames
-        val ghostMask = detectGhostRegions(frames, width, height)
-        // Reference frame index (base exposure, typically the middle frame)
-        val refFrame = if (numFrames >= 3) 1 else 0
 
         for (f in 0 until numFrames) {
             val pixels = frames[f]
@@ -210,25 +175,31 @@ class HdrProcessor {
             }
         }
 
-        val result = IntArray(n)
+        // Apply ghost mask — ghosted regions use only base frame
+        val ghostMask = detectGhostRegions(frames, width, height)
+        val baseIdx = numFrames / 2  // middle frame is base exposure
         for (i in 0 until n) {
             if (ghostMask[i]) {
-                // For ghosted pixels, use ONLY the reference (base) frame
-                result[i] = frames[refFrame][i]
-            } else {
-                var rSum = 0f; var gSum = 0f; var bSum = 0f
                 for (f in 0 until numFrames) {
-                    val w = weightMaps[f][i]
-                    val pixel = frames[f][i]
-                    rSum += w * ((pixel shr 16) and 0xFF)
-                    gSum += w * ((pixel shr 8) and 0xFF)
-                    bSum += w * (pixel and 0xFF)
+                    weightMaps[f][i] = if (f == baseIdx) 1f else 0f
                 }
-                val rOut = rSum.toInt().coerceIn(0, 255)
-                val gOut = gSum.toInt().coerceIn(0, 255)
-                val bOut = bSum.toInt().coerceIn(0, 255)
-                result[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
             }
+        }
+
+        val result = IntArray(n)
+        for (i in 0 until n) {
+            var rSum = 0f; var gSum = 0f; var bSum = 0f
+            for (f in 0 until numFrames) {
+                val w = weightMaps[f][i]
+                val pixel = frames[f][i]
+                rSum += w * ((pixel shr 16) and 0xFF)
+                gSum += w * ((pixel shr 8) and 0xFF)
+                bSum += w * (pixel and 0xFF)
+            }
+            val rOut = rSum.toInt().coerceIn(0, 255)
+            val gOut = gSum.toInt().coerceIn(0, 255)
+            val bOut = bSum.toInt().coerceIn(0, 255)
+            result[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
         }
 
         return result
