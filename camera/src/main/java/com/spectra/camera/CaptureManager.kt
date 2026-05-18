@@ -767,6 +767,10 @@ class CaptureManager @Inject constructor(
 
             ToneCurveEngine.apply(result, style)
 
+            if (style != PhotoStyle.NATURAL) {
+                applyHighlightRolloffToBitmap(result, style)
+            }
+
             if (beautyLevel > 0) {
                 applyLabBeauty(result, canvas, beautyLevel, faceRects)
             }
@@ -809,6 +813,29 @@ class CaptureManager @Inject constructor(
         } catch (e: Exception) {
             Log.e("CaptureManager", "Post-process failed", e)
         }
+    }
+
+    private fun applyHighlightRolloffToBitmap(bitmap: Bitmap, style: PhotoStyle) {
+        val params = ToneCurveEngine.styleHighlightParams(style)
+        if (params.strength <= 0f) return
+
+        val rolloff = ToneCurveEngine.buildHighlightRolloffCurve(params.shoulderStart, params.maxOutput, params.strength)
+
+        val w = bitmap.width
+        val h = bitmap.height
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        for (i in pixels.indices) {
+            val pixel = pixels[i]
+            val r = rolloff[(pixel shr 16) and 0xFF]
+            val g = rolloff[(pixel shr 8) and 0xFF]
+            val b = rolloff[pixel and 0xFF]
+            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+
+        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+        Log.d("CaptureManager", "Highlight rolloff applied: style=$style, shoulder=${params.shoulderStart}, max=${params.maxOutput}")
     }
 
     private fun applyHdrToneMap(bitmap: Bitmap) {
