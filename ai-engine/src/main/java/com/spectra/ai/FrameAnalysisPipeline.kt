@@ -78,7 +78,8 @@ class FrameAnalysisPipeline @Inject constructor(
         iso: Int = 100,
         colorTemperature: Int = 5500,
         gyroAngularVelocity: Float = 0f,
-        gyroConsistentFrames: Int = 0
+        gyroConsistentFrames: Int = 0,
+        rollAngleDegrees: Float = 0f
     ) {
         val currentFaceData = faceDetector.faceData.value
         val (sceneType, confidence) = sceneClassifier.classify(bitmap, isFrontCamera, currentFaceData)
@@ -115,7 +116,7 @@ class FrameAnalysisPipeline @Inject constructor(
         }
         val compositionResult = compositionAnalyzer.analyze(
             pixels, bitmap.width, bitmap.height,
-            faceRects, 0f
+            faceRects, rollAngleDegrees
         )
         _compositionResult.value = compositionResult
 
