@@ -12,11 +12,22 @@ object NoiseReducer {
 
     fun apply(bitmap: Bitmap, iso: Int) {
         val w = bitmap.width; val h = bitmap.height
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        val maxDim = 1920
+        val needsDownsample = w > maxDim || h > maxDim
+        val workBitmap = if (needsDownsample) {
+            val scale = maxDim.toFloat() / maxOf(w, h)
+            Bitmap.createScaledBitmap(bitmap, (w * scale).toInt(), (h * scale).toInt(), true)
+        } else {
+            bitmap
+        }
+        val ww = workBitmap.width; val wh = workBitmap.height
+
+        val pixels = IntArray(ww * wh)
+        workBitmap.getPixels(pixels, 0, ww, 0, 0, ww, wh)
 
         val sigma = computeSigma(iso)
-        val yChannel = IntArray(w * h); val cbChannel = IntArray(w * h); val crChannel = IntArray(w * h)
+        val yChannel = IntArray(ww * wh); val cbChannel = IntArray(ww * wh); val crChannel = IntArray(ww * wh)
 
         for (i in pixels.indices) {
             val r = (pixels[i] shr 16) and 0xFF; val g = (pixels[i] shr 8) and 0xFF; val b = pixels[i] and 0xFF
@@ -24,17 +35,27 @@ object NoiseReducer {
             yChannel[i] = ycbcr[0]; cbChannel[i] = ycbcr[1]; crChannel[i] = ycbcr[2]
         }
 
-        val cbFiltered = bilateralFilter(cbChannel, w, h, 5, sigma * 2.0f)
-        val crFiltered = bilateralFilter(crChannel, w, h, 5, sigma * 2.0f)
-        val yFiltered = bilateralFilter(yChannel, w, h, 3, sigma * 0.8f)
+        val cbFiltered = bilateralFilter(cbChannel, ww, wh, 5, sigma * 2.0f)
+        val crFiltered = bilateralFilter(crChannel, ww, wh, 5, sigma * 2.0f)
+        val yFiltered = bilateralFilter(yChannel, ww, wh, 3, sigma * 0.8f)
 
         for (i in pixels.indices) {
             val rgb = ColorSpaceUtils.ycbcrToRgb(yFiltered[i], cbFiltered[i], crFiltered[i])
             pixels[i] = (0xFF shl 24) or (rgb[0] shl 16) or (rgb[1] shl 8) or rgb[2]
         }
 
-        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
-        Log.d(TAG, "NR: ISO=$iso, sigma=$sigma")
+        workBitmap.setPixels(pixels, 0, ww, 0, 0, ww, wh)
+
+        if (needsDownsample) {
+            val upscaled = Bitmap.createScaledBitmap(workBitmap, w, h, true)
+            val upPixels = IntArray(w * h)
+            upscaled.getPixels(upPixels, 0, w, 0, 0, w, h)
+            bitmap.setPixels(upPixels, 0, w, 0, 0, w, h)
+            upscaled.recycle()
+            workBitmap.recycle()
+        }
+
+        Log.d(TAG, "NR: ISO=$iso, sigma=$sigma, workSize=${ww}x${wh}")
     }
 
     internal fun bilateralFilter(channel: IntArray, w: Int, h: Int, spatialRadius: Int, rangeSigma: Float): IntArray {

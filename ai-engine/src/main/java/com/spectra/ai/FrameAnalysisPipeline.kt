@@ -84,9 +84,16 @@ class FrameAnalysisPipeline @Inject constructor(
         val currentFaceData = faceDetector.faceData.value
         val (sceneType, confidence) = sceneClassifier.classify(bitmap, isFrontCamera, currentFaceData)
 
-        val pixels = IntArray(bitmap.width * bitmap.height)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        val avgBrightness = lightingAnalyzer.analyzeBrightness(pixels, bitmap.width, bitmap.height)
+        val analysisSize = 320
+        val scale = analysisSize.toFloat() / maxOf(bitmap.width, bitmap.height)
+        val sW = (bitmap.width * scale).toInt().coerceAtLeast(1)
+        val sH = (bitmap.height * scale).toInt().coerceAtLeast(1)
+        val sample = Bitmap.createScaledBitmap(bitmap, sW, sH, true)
+        val pixels = IntArray(sW * sH)
+        sample.getPixels(pixels, 0, sW, 0, 0, sW, sH)
+        sample.recycle()
+
+        val avgBrightness = lightingAnalyzer.analyzeBrightness(pixels, sW, sH)
         val estimatedCt = if (colorTemperature == 5500) {
             lightingAnalyzer.estimateColorTemperature(pixels)
         } else {
@@ -94,11 +101,10 @@ class FrameAnalysisPipeline @Inject constructor(
         }
         val lighting = lightingAnalyzer.analyzeFromMetadata(avgBrightness, exposureTimeNs, iso, estimatedCt, lightingAnalyzer.lastBrightnessVariance)
 
-        // Mixed lighting detection
         val faceRectsForLighting = if (currentFaceData.hasFaces) {
             currentFaceData.primaryFace?.bounds
         } else null
-        val mixedLighting = lightingAnalyzer.detectMixedLighting(pixels, bitmap.width, bitmap.height, faceRectsForLighting)
+        val mixedLighting = lightingAnalyzer.detectMixedLighting(pixels, sW, sH, faceRectsForLighting)
         val finalLighting = if (mixedLighting.isMixed) LightingCondition.MIXED else lighting
 
         motionDetector.addBitmap(bitmap)
@@ -108,14 +114,13 @@ class FrameAnalysisPipeline @Inject constructor(
 
         val distance = distanceEstimator.estimateFromFocusDistance(focusDistanceDiopters)
 
-        // Composition analysis
         val faceRects = if (currentFaceData.hasFaces) {
             currentFaceData.faces.map { it.bounds }
         } else {
             emptyList()
         }
         val compositionResult = compositionAnalyzer.analyze(
-            pixels, bitmap.width, bitmap.height,
+            pixels, sW, sH,
             faceRects, rollAngleDegrees
         )
         _compositionResult.value = compositionResult
