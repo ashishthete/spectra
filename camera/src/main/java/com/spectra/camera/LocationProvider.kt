@@ -17,6 +17,15 @@ class LocationProvider @Inject constructor(
 ) {
     private var lastLocation: Location? = null
 
+    fun startUpdates() {
+        // Location is fetched on demand via getLastLocation(); no persistent listener needed
+        // for the LocationManager-based implementation.
+    }
+
+    fun stopUpdates() {
+        // No persistent listener to clean up.
+    }
+
     fun getLastLocation(): Location? {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED

@@ -11,6 +11,7 @@ import com.spectra.app.settings.SettingsStore
 import com.spectra.camera.CaptureManager
 import com.spectra.camera.FrameProvider
 import com.spectra.camera.LevelSensor
+import com.spectra.camera.LocationProvider
 import com.spectra.camera.SpectraCameraController
 import com.spectra.core.model.AspectRatio
 import com.spectra.core.model.CameraMode
@@ -44,7 +45,8 @@ class CameraViewModel @Inject constructor(
     private val pipeline: FrameAnalysisPipeline,
     private val tipsRepository: TipsRepository,
     private val settingsStore: SettingsStore,
-    private val levelSensor: LevelSensor
+    private val levelSensor: LevelSensor,
+    private val locationProvider: LocationProvider
 ) : ViewModel() {
 
     private val _hudState = MutableStateFlow(HudState())
@@ -78,6 +80,7 @@ class CameraViewModel @Inject constructor(
     init {
         pipeline.initialize()
         levelSensor.start()
+        locationProvider.startUpdates()
 
         viewModelScope.launch {
             val mode = settingsStore.loadMode()
@@ -1043,6 +1046,7 @@ class CameraViewModel @Inject constructor(
         timerJob?.cancel()
         reviewDismissJob?.cancel()
         levelSensor.stop()
+        locationProvider.stopUpdates()
         pipeline.release()
         cameraController.release()
         captureManager.releaseDepthModel()
