@@ -174,7 +174,8 @@ class CameraViewModel @Inject constructor(
                 if (hdrFrameCounter % 10 == 0) {
                     val contrast = analyzeContrastFromBitmap(bitmap)
                     val hdrActive = contrast > 0.15f
-                    if (meta.mode == CameraMode.PRO) {
+                    val needsHistogram = meta.mode == CameraMode.PRO || meta.showMiniHistogram
+                    if (needsHistogram) {
                         val hist = com.spectra.app.ui.pro.computeHistogram(bitmap)
                         _hudState.update { it.copy(isHdrActive = hdrActive, sceneContrast = contrast, histogramData = hist) }
                     } else {
@@ -571,6 +572,10 @@ class CameraViewModel @Inject constructor(
 
     fun toggleHud() {
         _hudState.update { it.copy(isHudVisible = !it.isHudVisible) }
+    }
+
+    fun toggleMiniHistogram() {
+        _hudState.update { it.copy(showMiniHistogram = !it.showMiniHistogram) }
     }
 
     fun showReferenceCard() {

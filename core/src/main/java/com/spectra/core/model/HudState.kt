@@ -85,6 +85,7 @@ data class HudState(
     val isHdrActive: Boolean = false,
     val sceneContrast: Float = 0f,
     val histogramData: IntArray = IntArray(256),
+    val showMiniHistogram: Boolean = false,
 
     val isRecording: Boolean = false,
     val recordingDurationMs: Long = 0L,

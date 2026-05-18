@@ -53,6 +53,7 @@ import com.spectra.app.ui.hud.BeautyOverlay
 import com.spectra.app.ui.hud.CaptureFlash
 import com.spectra.app.ui.hud.FocusPeakingOverlay
 import com.spectra.app.ui.hud.HudOverlay
+import com.spectra.app.ui.hud.MiniHistogram
 import com.spectra.app.ui.hud.ReviewOverlay
 import com.spectra.app.ui.hud.SmartReviewOverlay
 import com.spectra.app.ui.review.AiExplainerOverlay
@@ -228,6 +229,32 @@ fun ViewfinderScreen(
                     .align(Alignment.TopEnd)
                     .padding(end = 16.dp, top = 120.dp)
             )
+        }
+
+        if (hudState.preset != com.spectra.core.model.CameraPreset.PRO) {
+            Text(
+                text = "H",
+                color = if (hudState.showMiniHistogram) HudColors.accent else HudColors.textSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 16.dp, top = 64.dp)
+                    .background(HudColors.surfaceGlass, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                    .clickable { viewModel.toggleMiniHistogram() }
+            )
+
+            if (hudState.showMiniHistogram) {
+                MiniHistogram(
+                    histogramData = hudState.histogramData,
+                    onClick = { viewModel.toggleMiniHistogram() },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(end = 16.dp, top = 88.dp)
+                )
+            }
         }
 
         ProModePanel(
