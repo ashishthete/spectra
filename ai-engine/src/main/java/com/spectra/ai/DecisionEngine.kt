@@ -7,8 +7,51 @@ import com.spectra.core.model.SceneType
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class ExposureStrategy(
+    val useSemiAuto: Boolean,
+    val minShutterDenom: Int = 60,
+    val maxIso: Int = 3200,
+    val reason: String = ""
+)
+
 @Singleton
 class DecisionEngine @Inject constructor() {
+
+    fun getExposureStrategy(preset: com.spectra.core.model.CameraPreset, sceneConfidence: Float): ExposureStrategy {
+        if (sceneConfidence < 0.7f || preset == com.spectra.core.model.CameraPreset.AUTO) {
+            return ExposureStrategy(useSemiAuto = false, reason = "AUTO — low confidence or auto preset")
+        }
+        return when (preset) {
+            com.spectra.core.model.CameraPreset.PORTRAIT -> ExposureStrategy(
+                useSemiAuto = true, minShutterDenom = 125, maxIso = 800,
+                reason = "PORTRAIT — moderate shutter, low noise"
+            )
+            com.spectra.core.model.CameraPreset.ACTION -> ExposureStrategy(
+                useSemiAuto = true, minShutterDenom = 500, maxIso = 3200,
+                reason = "ACTION — fast shutter priority"
+            )
+            com.spectra.core.model.CameraPreset.NIGHT -> ExposureStrategy(
+                useSemiAuto = true, minShutterDenom = 15, maxIso = 1600,
+                reason = "NIGHT — long exposure, controlled ISO"
+            )
+            com.spectra.core.model.CameraPreset.LANDSCAPE -> ExposureStrategy(
+                useSemiAuto = true, minShutterDenom = 125, maxIso = 200,
+                reason = "LANDSCAPE — base ISO priority"
+            )
+            com.spectra.core.model.CameraPreset.FOOD -> ExposureStrategy(
+                useSemiAuto = true, minShutterDenom = 100, maxIso = 400,
+                reason = "FOOD — low noise, moderate shutter"
+            )
+            com.spectra.core.model.CameraPreset.MACRO -> ExposureStrategy(
+                useSemiAuto = true, minShutterDenom = 250, maxIso = 400,
+                reason = "MACRO — fast shutter to prevent micro-shake"
+            )
+            com.spectra.core.model.CameraPreset.PRO -> ExposureStrategy(
+                useSemiAuto = false, reason = "PRO — manual control"
+            )
+            else -> ExposureStrategy(useSemiAuto = false, reason = "Fallback auto")
+        }
+    }
 
     fun recommendLens(analysis: SceneAnalysis): LensRecommendation {
         val scores = mutableMapOf<LensId, Float>()

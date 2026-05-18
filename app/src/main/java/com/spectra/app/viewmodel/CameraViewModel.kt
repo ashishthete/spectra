@@ -199,6 +199,8 @@ class CameraViewModel @Inject constructor(
                     anyBlinking = faces.anyBlinking
                 )}
                 if (faces.hasFaces && !_hudState.value.aeAfLocked && !_hudState.value.isFrontCamera) {
+                    cameraController.applyFaceMetering(faces.faces.map { it.bounds })
+
                     val primary = faces.primaryFace ?: return@collect
                     val focusX = primary.rightEyePosition?.x
                         ?: primary.leftEyePosition?.x
@@ -278,7 +280,9 @@ class CameraViewModel @Inject constructor(
                 }
                 if (_hudState.value.mode != CameraMode.PRO && profile.settings != lastAppliedSettings) {
                     lastAppliedSettings = profile.settings
-                    applySettingsToHardware(profile.settings)
+                    val state = _hudState.value
+                    val strategy = pipeline.decisionEngine.getExposureStrategy(state.preset, state.sceneConfidence)
+                    applySettingsToHardware(profile.settings, semiAuto = strategy.useSemiAuto)
                 }
             }
         }
@@ -360,11 +364,11 @@ class CameraViewModel @Inject constructor(
     }
 
 
-    private fun applySettingsToHardware(settings: CameraSettings, manual: Boolean = false) {
+    private fun applySettingsToHardware(settings: CameraSettings, manual: Boolean = false, semiAuto: Boolean = false) {
         try {
             val motionLevel = _hudState.value.motionLevel
-            val semiAuto = _hudState.value.settingsDisplayMode == com.spectra.core.model.SettingsDisplayMode.SMART_AUTO
-            cameraController.applySettings(settings, manual, motionLevel, semiAuto)
+            val useSemiAuto = semiAuto || _hudState.value.settingsDisplayMode == com.spectra.core.model.SettingsDisplayMode.SMART_AUTO
+            cameraController.applySettings(settings, manual, motionLevel, useSemiAuto)
         } catch (e: Exception) {
             Log.w("CameraViewModel", "Failed to apply camera settings", e)
         }
