@@ -762,11 +762,13 @@ class CameraViewModel @Inject constructor(
                 aiEnhancedUri = null,
                 isEnhancing = true,
                 captureExplanation = explanation,
-                showAiExplainer = true
+                showAiExplainer = false
             )}
 
             viewModelScope.launch {
-                delay(3000)
+                delay(1000)  // Wait 1s after capture before showing
+                _hudState.update { it.copy(showAiExplainer = true) }
+                delay(5000)  // Extended from 3s to 5s
                 _hudState.update { it.copy(showAiExplainer = false) }
             }
 
