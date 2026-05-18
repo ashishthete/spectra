@@ -34,6 +34,7 @@ class CoachingEngine @Inject constructor() {
             analysis.motionLevel == MotionLevel.FAST || analysis.motionLevel == MotionLevel.VERY_FAST ->
                 motionHint(analysis, preset)
             analysis.lighting == LightingCondition.BACKLIT -> backlitHint(preset)
+            analysis.lighting == LightingCondition.MIXED -> mixedLightingHint()
             else -> presetHint(preset, analysis)
         }
 
@@ -217,6 +218,14 @@ class CoachingEngine @Inject constructor() {
                 CoachingHint("Macro needs light — use a lamp or move to window", ArrowDirection.NONE, priority = 6)
             else -> CoachingHint("Get as close as possible — let autofocus lock", ArrowDirection.NONE, priority = 4)
         }
+    }
+
+    private fun mixedLightingHint(): CoachingHint {
+        return CoachingHint(
+            "Mixed lighting detected — WB matched to subject",
+            ArrowDirection.NONE,
+            priority = 5
+        )
     }
 
     private fun compositionHint(composition: CompositionResult): CoachingHint? {

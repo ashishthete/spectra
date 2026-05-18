@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import com.spectra.ai.cloud.CloudCoachingManager
 import com.spectra.ai.model.*
 import com.spectra.ai.model.CompositionResult
+import com.spectra.ai.model.LightingCondition
 import com.spectra.core.model.CameraMode
 import com.spectra.core.model.CameraPreset
 import com.spectra.core.model.CameraSettings
@@ -92,6 +93,13 @@ class FrameAnalysisPipeline @Inject constructor(
         }
         val lighting = lightingAnalyzer.analyzeFromMetadata(avgBrightness, exposureTimeNs, iso, estimatedCt, lightingAnalyzer.lastBrightnessVariance)
 
+        // Mixed lighting detection
+        val faceRectsForLighting = if (currentFaceData.hasFaces) {
+            currentFaceData.primaryFace?.bounds
+        } else null
+        val mixedLighting = lightingAnalyzer.detectMixedLighting(pixels, bitmap.width, bitmap.height, faceRectsForLighting)
+        val finalLighting = if (mixedLighting.isMixed) LightingCondition.MIXED else lighting
+
         motionDetector.addBitmap(bitmap)
         motionDetector.updateGyro(gyroAngularVelocity, gyroConsistentFrames)
         val motionType = motionDetector.currentMotionType
@@ -114,7 +122,7 @@ class FrameAnalysisPipeline @Inject constructor(
         val sceneAnalysis = SceneAnalysis(
             sceneType = sceneType,
             confidence = confidence,
-            lighting = lighting,
+            lighting = finalLighting,
             motionLevel = motion,
             motionType = motionType,
             distanceRange = distance,
