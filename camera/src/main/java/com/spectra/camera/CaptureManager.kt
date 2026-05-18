@@ -310,7 +310,7 @@ class CaptureManager @Inject constructor(
         val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         result.setPixels(outPixels, 0, w, 0, 0, w, h)
 
-        applyHdrToneMap(result)
+        applyLocalToneMap(result, 0.5f)
         applySharpen(result)
         applyEnhanceColors(result)
 
@@ -744,8 +744,8 @@ class CaptureManager @Inject constructor(
             canvas.drawBitmap(result, 0f, 0f, enhancePaint)
 
             if (isHdr) {
-                applyHdrToneMap(result)
-                Log.d("CaptureManager", "HDR tone mapping applied")
+                applyLocalToneMap(result, 0.5f)
+                Log.d("CaptureManager", "Local tone mapping (bilateral decomposition) applied")
             }
 
             if (isFrontCamera) {
@@ -833,6 +833,54 @@ class CaptureManager @Inject constructor(
             val rOut = (r * scale * 255f).toInt().coerceIn(0, 255)
             val gOut = (g * scale * 255f).toInt().coerceIn(0, 255)
             val bOut = (b * scale * 255f).toInt().coerceIn(0, 255)
+
+            pixels[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
+        }
+
+        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+    }
+
+    private fun applyLocalToneMap(bitmap: android.graphics.Bitmap, compressionFactor: Float) {
+        val w = bitmap.width
+        val h = bitmap.height
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        val luminance = FloatArray(w * h)
+        val logLum = FloatArray(w * h)
+        for (i in pixels.indices) {
+            val r = ((pixels[i] shr 16) and 0xFF) / 255f
+            val g = ((pixels[i] shr 8) and 0xFF) / 255f
+            val b = (pixels[i] and 0xFF) / 255f
+            luminance[i] = (0.299f * r + 0.587f * g + 0.114f * b).coerceAtLeast(0.001f)
+            logLum[i] = kotlin.math.ln(luminance[i])
+        }
+
+        val base = FloatArray(w * h)
+        System.arraycopy(logLum, 0, base, 0, logLum.size)
+        bilateralApprox(base, logLum, w, h, spatialRadius = 5, rangeSigma = 0.4f)
+
+        val detail = FloatArray(w * h)
+        for (i in detail.indices) {
+            detail[i] = logLum[i] - base[i]
+        }
+
+        val baseMean = base.average().toFloat()
+        for (i in base.indices) {
+            base[i] = baseMean + (base[i] - baseMean) * compressionFactor
+        }
+
+        for (i in pixels.indices) {
+            val newLum = kotlin.math.exp(base[i] + detail[i]).coerceIn(0.001f, 10f)
+            val scale = if (luminance[i] > 0.001f) (newLum / luminance[i]).coerceIn(0.2f, 5f) else 1f
+
+            val r = ((pixels[i] shr 16) and 0xFF)
+            val g = ((pixels[i] shr 8) and 0xFF)
+            val b = (pixels[i] and 0xFF)
+
+            val rOut = (r * scale).toInt().coerceIn(0, 255)
+            val gOut = (g * scale).toInt().coerceIn(0, 255)
+            val bOut = (b * scale).toInt().coerceIn(0, 255)
 
             pixels[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
         }
@@ -1349,6 +1397,46 @@ class CaptureManager @Inject constructor(
 
             bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
             canvas.drawBitmap(bitmap, 0f, 0f, android.graphics.Paint())
+        }
+
+        fun bilateralApprox(
+            output: FloatArray,
+            guide: FloatArray,
+            w: Int,
+            h: Int,
+            spatialRadius: Int,
+            rangeSigma: Float
+        ) {
+            val temp = FloatArray(output.size)
+            val rangeVar = 2f * rangeSigma * rangeSigma
+
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    val idx = y * w + x
+                    val centerVal = guide[idx]
+                    var weightedSum = 0f
+                    var weightSum = 0f
+
+                    val y0 = maxOf(0, y - spatialRadius)
+                    val y1 = minOf(h - 1, y + spatialRadius)
+                    val x0 = maxOf(0, x - spatialRadius)
+                    val x1 = minOf(w - 1, x + spatialRadius)
+
+                    for (ny in y0..y1) {
+                        for (nx in x0..x1) {
+                            val nIdx = ny * w + nx
+                            val diff = guide[nIdx] - centerVal
+                            val rangeWeight = kotlin.math.exp(-(diff * diff) / rangeVar)
+                            weightedSum += output[nIdx] * rangeWeight
+                            weightSum += rangeWeight
+                        }
+                    }
+
+                    temp[idx] = if (weightSum > 0f) weightedSum / weightSum else output[idx]
+                }
+            }
+
+            System.arraycopy(temp, 0, output, 0, output.size)
         }
 
         private fun bilateralFilterFloat(
