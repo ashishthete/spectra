@@ -50,7 +50,13 @@ fun AiExplainerOverlay(
                     .padding(16.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "✨", fontSize = 14.sp)
+                    Text(
+                        text = "AI",
+                        color = HudColors.accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "WHAT AI DID",

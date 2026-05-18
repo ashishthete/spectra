@@ -41,18 +41,14 @@ fun TopControlBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         TopButton(
-            icon = when (flashMode) {
-                FlashMode.AUTO -> "A"
-                FlashMode.ON -> "⚡"
-                FlashMode.OFF -> "⊘"
-            },
+            icon = flashMode.icon,
             label = "Flash",
             isActive = flashMode == FlashMode.ON,
             onClick = onFlashToggle
         )
 
         TopButton(
-            icon = if (timerSeconds > 0) "${timerSeconds}s" else "◎",
+            icon = if (timerSeconds > 0) "${timerSeconds}s" else "T",
             label = "Timer",
             isActive = timerSeconds > 0,
             onClick = onTimerToggle

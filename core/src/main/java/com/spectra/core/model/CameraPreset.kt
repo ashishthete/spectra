@@ -6,12 +6,12 @@ enum class CameraPreset(
     val preferredLens: LensId = LensId.MAIN,
     val isFrontCameraDefault: Boolean = false
 ) {
-    AUTO("Auto", "✨", preferredLens = LensId.MAIN),
-    PORTRAIT("Portrait", "👤", preferredLens = LensId.TELEPHOTO_3X),
-    NIGHT("Night", "🌙", preferredLens = LensId.MAIN),
-    FOOD("Food", "🍽", preferredLens = LensId.MAIN),
-    LANDSCAPE("Landscape", "🏞", preferredLens = LensId.MAIN),
-    ACTION("Action", "⚡", preferredLens = LensId.MAIN),
-    MACRO("Macro", "🔍", preferredLens = LensId.MAIN),
-    PRO("Pro", "⚙", preferredLens = LensId.MAIN);
+    AUTO("Auto", "AUTO", preferredLens = LensId.MAIN),
+    PORTRAIT("Portrait", "PORT", preferredLens = LensId.TELEPHOTO_3X),
+    NIGHT("Night", "NGHT", preferredLens = LensId.MAIN),
+    FOOD("Food", "FOOD", preferredLens = LensId.MAIN),
+    LANDSCAPE("Landscape", "LNDS", preferredLens = LensId.MAIN),
+    ACTION("Action", "ACTN", preferredLens = LensId.MAIN),
+    MACRO("Macro", "MCRO", preferredLens = LensId.MAIN),
+    PRO("Pro", "PRO", preferredLens = LensId.MAIN);
 }
