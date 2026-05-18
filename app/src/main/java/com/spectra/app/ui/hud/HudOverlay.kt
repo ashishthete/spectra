@@ -65,6 +65,8 @@ fun HudOverlay(
                     actualIso = state.actualIso,
                     actualShutterNs = state.actualShutterSpeedNs,
                     actualColorTemperature = state.actualColorTemperature,
+                    aiRecommendedSettings = state.aiRecommendedSettings,
+                    settingsDisplayMode = state.settingsDisplayMode,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(end = 20.dp, top = 60.dp)
