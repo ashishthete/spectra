@@ -2,6 +2,7 @@ package com.spectra.camera
 
 import android.graphics.Rect
 import android.graphics.RectF
+import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.MeteringRectangle
 import android.hardware.camera2.params.RggbChannelVector
@@ -75,6 +76,15 @@ class Camera2SettingsApplier @Inject constructor() {
             )
         }
 
+        builder.setCaptureRequestOption(
+            CaptureRequest.NOISE_REDUCTION_MODE,
+            CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+        )
+        builder.setCaptureRequestOption(
+            CaptureRequest.EDGE_MODE,
+            CameraMetadata.EDGE_MODE_HIGH_QUALITY
+        )
+
         camera2Control.captureRequestOptions = builder.build()
         Log.d("SettingsApplier", "Manual: ISO=${settings.iso}, shutter=1/${settings.shutterSpeedDenominator}, WB=${settings.whiteBalanceKelvin}K, focus=${settings.focusDistance}")
     }
@@ -139,6 +149,15 @@ class Camera2SettingsApplier @Inject constructor() {
             Log.d("SettingsApplier", "Auto-hints: EV=$evSteps(motion=$motionEvBias), WB=auto")
         }
 
+        builder.setCaptureRequestOption(
+            CaptureRequest.NOISE_REDUCTION_MODE,
+            CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+        )
+        builder.setCaptureRequestOption(
+            CaptureRequest.EDGE_MODE,
+            CameraMetadata.EDGE_MODE_HIGH_QUALITY
+        )
+
         camera2Control.captureRequestOptions = builder.build()
     }
 
@@ -166,6 +185,14 @@ class Camera2SettingsApplier @Inject constructor() {
             .setCaptureRequestOption(
                 CaptureRequest.CONTROL_AF_MODE,
                 CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+            )
+            .setCaptureRequestOption(
+                CaptureRequest.NOISE_REDUCTION_MODE,
+                CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+            )
+            .setCaptureRequestOption(
+                CaptureRequest.EDGE_MODE,
+                CameraMetadata.EDGE_MODE_HIGH_QUALITY
             )
             .build()
 
@@ -227,6 +254,15 @@ class Camera2SettingsApplier @Inject constructor() {
                 CaptureRequest.CONTROL_AWB_MODE_AUTO
             )
         }
+
+        builder.setCaptureRequestOption(
+            CaptureRequest.NOISE_REDUCTION_MODE,
+            CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY
+        )
+        builder.setCaptureRequestOption(
+            CaptureRequest.EDGE_MODE,
+            CameraMetadata.EDGE_MODE_HIGH_QUALITY
+        )
 
         camera2Control.captureRequestOptions = builder.build()
         Log.d("SettingsApplier", "SemiAuto: ISO=$clampedIso, exposure=${clampedExposureNs}ns, WB=${settings.whiteBalanceKelvin}K")

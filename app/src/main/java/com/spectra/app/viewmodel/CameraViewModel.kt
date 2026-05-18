@@ -789,7 +789,7 @@ class CameraViewModel @Inject constructor(
         }
         try {
             val state = _hudState.value
-            val isHdr = false
+            val isHdr = state.isHdrActive && !state.isFrontCamera
             if (isHdr) {
                 try {
                     Log.d("CameraViewModel", "HDR capture path")
@@ -872,7 +872,8 @@ class CameraViewModel @Inject constructor(
                 state.isFrontCamera,
                 state.isHdrActive,
                 lastDetectedFaceRects,
-                processing = state.processing
+                processing = state.processing,
+                currentIso = state.actualIso
             )
 
             if (state.settings.captureRaw && result.allFrames.isNotEmpty()) {

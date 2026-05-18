@@ -97,12 +97,47 @@ class CaptureManager @Inject constructor(
         isFrontCamera: Boolean = false,
         isHdr: Boolean = false,
         faceRects: List<RectF> = emptyList(),
-        processing: ProcessingParams = ProcessingParams()
+        processing: ProcessingParams = ProcessingParams(),
+        currentIso: Int = 0
     ): SmartCaptureResult {
-        val frame = captureInMemory(imageCapture)
-        val uri = saveJpegToMediaStore(frame.first, frame.second)
-        Log.d("CaptureManager", "Single-frame capture saved: ${frame.first.size} bytes")
-        return SmartCaptureResult(bestOriginalUri = uri, allFrames = listOf(frame))
+        val frameCount = when {
+            isFrontCamera -> 1
+            currentIso > 1200 -> 3
+            else -> 1
+        }
+
+        if (frameCount <= 1) {
+            val frame = captureInMemory(imageCapture)
+            val uri = saveJpegToMediaStore(frame.first, frame.second)
+            Log.d("CaptureManager", "Single-frame capture saved: ${frame.first.size} bytes, ISO=$currentIso")
+            return SmartCaptureResult(bestOriginalUri = uri, allFrames = listOf(frame))
+        }
+
+        val frames = mutableListOf<Pair<ByteArray, Int>>()
+        for (i in 0 until frameCount) {
+            try {
+                frames.add(captureInMemory(imageCapture))
+                if (i < frameCount - 1) delay(60)
+            } catch (e: Exception) {
+                Log.w("CaptureManager", "Smart capture frame $i failed", e)
+            }
+        }
+        if (frames.isEmpty()) {
+            val frame = captureInMemory(imageCapture)
+            val uri = saveJpegToMediaStore(frame.first, frame.second)
+            return SmartCaptureResult(bestOriginalUri = uri, allFrames = listOf(frame))
+        }
+
+        val merged = try {
+            withContext(Dispatchers.Default) { burstMerge(frames) }
+        } catch (oom: OutOfMemoryError) {
+            Log.w("CaptureManager", "OOM during burst merge, falling back to best single frame")
+            System.gc()
+            frames.maxBy { (jpeg, _) -> jpeg.size }
+        }
+        val uri = saveJpegToMediaStore(merged.first, merged.second)
+        Log.d("CaptureManager", "Multi-frame capture: ${frames.size} frames merged, ISO=$currentIso")
+        return SmartCaptureResult(bestOriginalUri = uri, allFrames = frames)
     }
 
     private fun burstMerge(frames: List<Pair<ByteArray, Int>>): Pair<ByteArray, Int> {
@@ -322,19 +357,24 @@ class CaptureManager @Inject constructor(
     ): String {
         return withContext(Dispatchers.Default) {
             try {
+                val pipelineStart = System.nanoTime()
                 val sourceUri = Uri.parse(rawUri)
                 val inputStream = context.contentResolver.openInputStream(sourceUri) ?: return@withContext rawUri
                 val original = BitmapFactory.decodeStream(inputStream)
                 inputStream.close()
                 if (original == null) return@withContext rawUri
-
+                Log.d("Pipeline", "DECODE: ${(System.nanoTime() - pipelineStart) / 1_000_000}ms, ${original.width}x${original.height}")
+                val enhStart = System.nanoTime()
                 val params = ImageEnhancer.EnhanceParams.forPreset(preset, captureIso, sceneContrast)
                 val origScore = ImageEnhancer.scoreQuality(original)
+                Log.d("Pipeline", "SCORE_ORIG: ${(System.nanoTime() - enhStart) / 1_000_000}ms")
+                val enhStart2 = System.nanoTime()
                 val enhanced = ImageEnhancer.enhance(original, params)
+                Log.d("Pipeline", "ENHANCE: ${(System.nanoTime() - enhStart2) / 1_000_000}ms")
                 val enhScore = ImageEnhancer.scoreQuality(enhanced)
-                Log.d("CaptureManager", "Quality scores - Original: %.3f, AI: %.3f, preset: %s".format(origScore, enhScore, preset))
+                Log.d("Pipeline", "Quality: orig=%.3f, ai=%.3f, preset=%s, total=${(System.nanoTime() - pipelineStart) / 1_000_000}ms".format(origScore, enhScore, preset))
                 if (enhScore < origScore - 0.02f) {
-                    Log.d("CaptureManager", "AI worse than original, keeping original")
+                    Log.d("Pipeline", "AI worse than original, keeping original")
                     enhanced.recycle()
                     original.recycle()
                     return@withContext rawUri
@@ -359,13 +399,13 @@ class CaptureManager @Inject constructor(
                 } else 0
 
                 val copyUri = saveJpegToMediaStore(stream.toByteArray(), rotation, "_AI")
-                Log.d("CaptureManager", "Enhanced copy saved: $copyUri (${stream.size()} bytes)")
+                Log.d("Pipeline", "SAVE: done, total=${(System.nanoTime() - pipelineStart) / 1_000_000}ms, ${stream.size()} bytes")
                 copyUri.ifEmpty { rawUri }
             } catch (e: Exception) {
-                Log.w("CaptureManager", "Enhancement failed, using original", e)
+                Log.w("Pipeline", "Enhancement FAILED: ${e.message}", e)
                 rawUri
             } catch (oom: OutOfMemoryError) {
-                Log.w("CaptureManager", "Enhancement OOM, using original")
+                Log.w("Pipeline", "Enhancement OOM")
                 System.gc()
                 rawUri
             }

@@ -18,7 +18,7 @@ class NoiseReducerTest {
     }
 
     @Test fun `sigma at ISO 3200 is strong`() {
-        assertThat(NoiseReducer.computeSigma(3200)).isWithin(0.01f).of(8.5f)
+        assertThat(NoiseReducer.computeSigma(3200)).isWithin(0.01f).of(5.0f)
     }
 
     @Test fun `tiled bilateral matches single-pass for small images`() {

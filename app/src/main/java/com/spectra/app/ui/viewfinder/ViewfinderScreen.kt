@@ -75,7 +75,7 @@ fun ViewfinderScreen(
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
 
-    var lastZoomRatio by remember { mutableFloatStateOf(1f) }
+    var lastZoomRatio by remember { mutableFloatStateOf(hudState.zoomRatio) }
     val density = LocalDensity.current
     val topDeadZonePx = with(density) { 60.dp.toPx() }
     val bottomDeadZonePx = with(density) { 180.dp.toPx() }
@@ -300,6 +300,18 @@ fun ViewfinderScreen(
                     .padding(horizontal = 12.dp, vertical = 4.dp)
             )
         }
+
+        com.spectra.app.ui.controls.ZoomDial(
+            zoomRatio = hudState.zoomRatio,
+            maxZoomRatio = hudState.maxZoomRatio,
+            onZoomChanged = { ratio ->
+                lastZoomRatio = ratio
+                viewModel.setZoom(ratio)
+            },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = 220.dp)
+        )
 
         Column(
             modifier = Modifier
