@@ -84,7 +84,11 @@ class SceneClassifier @Inject constructor(
     private fun classifyBase(bitmap: Bitmap, faceData: FaceData = FaceData.EMPTY): Pair<SceneType, Float> {
         val interp = interpreter
         if (interp != null && labelMap.isNotEmpty()) {
-            val resized = Bitmap.createScaledBitmap(bitmap, inputSize, inputSize, true)
+            val safeBmp = if (bitmap.config == null || bitmap.colorSpace == null) {
+                bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return classifyHeuristic(bitmap, faceData)
+            } else bitmap
+            val resized = Bitmap.createScaledBitmap(safeBmp, inputSize, inputSize, true)
+            if (safeBmp !== bitmap) safeBmp.recycle()
             val inputBuffer = bitmapToByteBuffer(resized)
             resized.recycle()
 
@@ -120,7 +124,11 @@ class SceneClassifier @Inject constructor(
 
     private fun classifyHeuristic(bitmap: Bitmap, faceData: FaceData = FaceData.EMPTY): Pair<SceneType, Float> {
         val size = 48
-        val sample = Bitmap.createScaledBitmap(bitmap, size, size, true)
+        val safeBitmap = if (bitmap.config == null || bitmap.colorSpace == null) {
+            bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return Pair(SceneType.UNKNOWN, 0f)
+        } else bitmap
+        val sample = Bitmap.createScaledBitmap(safeBitmap, size, size, true)
+        if (safeBitmap !== bitmap) safeBitmap.recycle()
         val pixels = IntArray(size * size)
         sample.getPixels(pixels, 0, size, 0, 0, size, size)
         sample.recycle()

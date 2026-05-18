@@ -39,7 +39,7 @@ data class HudState(
     val cameraMegapixels: Int = 12,
     val cameraAperture: Float = 1.7f,
 
-    val flashMode: FlashMode = FlashMode.AUTO,
+    val flashMode: FlashMode = FlashMode.OFF,
     val timerSeconds: Int = 0,
     val aspectRatio: AspectRatio = AspectRatio.RATIO_4_3,
 

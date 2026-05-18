@@ -253,6 +253,7 @@ class SpectraCameraController @Inject constructor(
         imageCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setTargetRotation(rotation)
+            .setFlashMode(ImageCapture.FLASH_MODE_OFF)
             .build()
 
         val analysisBuilder = ImageAnalysis.Builder()
@@ -309,6 +310,7 @@ class SpectraCameraController @Inject constructor(
         imageCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setTargetRotation(rotation)
+            .setFlashMode(ImageCapture.FLASH_MODE_OFF)
             .build()
 
         val analysisBuilder = ImageAnalysis.Builder()

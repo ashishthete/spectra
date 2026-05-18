@@ -101,6 +101,10 @@ class Camera2SettingsApplier @Inject constructor() {
                 CaptureRequest.CONTROL_MODE_AUTO
             )
             .setCaptureRequestOption(
+                CaptureRequest.CONTROL_AE_MODE,
+                CaptureRequest.CONTROL_AE_MODE_ON
+            )
+            .setCaptureRequestOption(
                 CaptureRequest.CONTROL_AF_MODE,
                 CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
             )

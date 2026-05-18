@@ -76,6 +76,9 @@ class CameraViewModel @Inject constructor(
     private var lastRecommendedLens: LensId? = null
     private var lastDetectedFaceRects: List<android.graphics.RectF> = emptyList()
     private var smartCaptureFrames: List<Pair<ByteArray, Int>>? = null
+    private var lastFaceMeteringMs: Long = 0L
+    private var lastSettingsAppliedMs: Long = 0L
+    private var lastAppliedSemiAuto: Boolean = false
 
     init {
         pipeline.initialize()
@@ -122,70 +125,90 @@ class CameraViewModel @Inject constructor(
 
         viewModelScope.launch {
             cameraController.sensorMetadata.collect { meta ->
-                _hudState.update { it.copy(
-                    actualIso = meta.iso,
-                    actualShutterSpeedNs = meta.exposureTimeNs,
-                    actualFocusDistance = meta.focusDistanceDiopters,
-                    actualColorTemperature = meta.colorTemperatureK
-                )}
+                val state = _hudState.value
+                if (meta.iso != state.actualIso ||
+                    meta.exposureTimeNs != state.actualShutterSpeedNs ||
+                    meta.focusDistanceDiopters != state.actualFocusDistance ||
+                    meta.colorTemperatureK != state.actualColorTemperature) {
+                    _hudState.update { it.copy(
+                        actualIso = meta.iso,
+                        actualShutterSpeedNs = meta.exposureTimeNs,
+                        actualFocusDistance = meta.focusDistanceDiopters,
+                        actualColorTemperature = meta.colorTemperatureK
+                    )}
+                }
             }
         }
 
         viewModelScope.launch {
             cameraController.zoomRatio.collect { zoom ->
-                _hudState.update { it.copy(zoomRatio = zoom) }
+                if (zoom != _hudState.value.zoomRatio) {
+                    _hudState.update { it.copy(zoomRatio = zoom) }
+                }
             }
         }
 
         viewModelScope.launch {
             cameraController.maxZoomRatio.collect { max ->
-                _hudState.update { it.copy(maxZoomRatio = max) }
+                if (max != _hudState.value.maxZoomRatio) {
+                    _hudState.update { it.copy(maxZoomRatio = max) }
+                }
             }
         }
 
         viewModelScope.launch {
             levelSensor.rollAngle.collect { angle ->
-                _hudState.update { it.copy(levelAngle = angle) }
+                if (kotlin.math.abs(angle - _hudState.value.levelAngle) > 0.5f) {
+                    _hudState.update { it.copy(levelAngle = angle) }
+                }
             }
         }
 
         viewModelScope.launch {
             levelSensor.pitchAngle.collect { angle ->
-                _hudState.update { it.copy(pitchAngle = angle) }
+                if (kotlin.math.abs(angle - _hudState.value.pitchAngle) > 0.5f) {
+                    _hudState.update { it.copy(pitchAngle = angle) }
+                }
             }
         }
 
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.Default) {
             frameProvider.frames.collect { bitmap ->
                 val meta = _hudState.value
-                pipeline.faceDetector.detectFaces(bitmap, bitmap.width, bitmap.height)
-                pipeline.analyzeFrame(
-                    bitmap,
-                    mode = meta.mode,
-                    preset = meta.preset,
-                    isFrontCamera = meta.isFrontCamera,
-                    focusDistanceDiopters = meta.actualFocusDistance,
-                    exposureTimeNs = meta.actualShutterSpeedNs,
-                    iso = if (meta.actualIso > 0) meta.actualIso else 100,
-                    colorTemperature = if (meta.actualColorTemperature > 0) meta.actualColorTemperature else 5500,
-                    rollAngleDegrees = meta.levelAngle
-                )
+                try {
+                    pipeline.faceDetector.detectFaces(bitmap, bitmap.width, bitmap.height)
+                    pipeline.analyzeFrame(
+                        bitmap,
+                        mode = meta.mode,
+                        preset = meta.preset,
+                        isFrontCamera = meta.isFrontCamera,
+                        focusDistanceDiopters = meta.actualFocusDistance,
+                        exposureTimeNs = meta.actualShutterSpeedNs,
+                        iso = if (meta.actualIso > 0) meta.actualIso else 100,
+                        colorTemperature = if (meta.actualColorTemperature > 0) meta.actualColorTemperature else 5500,
+                        rollAngleDegrees = meta.levelAngle
+                    )
+                } catch (e: Exception) {
+                    Log.w("CameraViewModel", "Frame analysis failed", e)
+                    return@collect
+                }
                 hdrFrameCounter++
-                if (hdrFrameCounter % 10 == 0) {
+                if (hdrFrameCounter % 30 == 0) {
                     val contrast = analyzeContrastFromBitmap(bitmap)
-                    val hdrActive = contrast > 0.15f
-                    val needsHistogram = meta.mode == CameraMode.PRO || meta.showMiniHistogram
-                    if (needsHistogram) {
-                        val hist = com.spectra.app.ui.pro.computeHistogram(bitmap)
-                        _hudState.update { it.copy(isHdrActive = hdrActive, sceneContrast = contrast, histogramData = hist) }
-                    } else {
-                        _hudState.update { it.copy(isHdrActive = hdrActive, sceneContrast = contrast) }
+                    val hdrActive = contrast > 0.40f
+                    val state = _hudState.value
+                    if (hdrActive != state.isHdrActive || kotlin.math.abs(contrast - state.sceneContrast) > 0.02f) {
+                        val needsHistogram = meta.mode == CameraMode.PRO || meta.showMiniHistogram
+                        if (needsHistogram) {
+                            val hist = com.spectra.app.ui.pro.computeHistogram(bitmap)
+                            _hudState.update { it.copy(isHdrActive = hdrActive, sceneContrast = contrast, histogramData = hist) }
+                        } else {
+                            _hudState.update { it.copy(isHdrActive = hdrActive, sceneContrast = contrast) }
+                        }
                     }
                 }
                 if (meta.mode == CameraMode.PRO && (meta.focusPeakingEnabled || meta.zebraEnabled)) {
-                    withContext(Dispatchers.Default) {
-                        computeProOverlays(bitmap, meta.focusPeakingEnabled, meta.zebraEnabled)
-                    }
+                    computeProOverlays(bitmap, meta.focusPeakingEnabled, meta.zebraEnabled)
                 }
             }
         }
@@ -205,7 +228,9 @@ class CameraViewModel @Inject constructor(
                         anyBlinking = faces.anyBlinking
                     )}
                 }
-                if (faces.hasFaces && !_hudState.value.aeAfLocked && !_hudState.value.isFrontCamera) {
+                val now = System.currentTimeMillis()
+                if (faces.hasFaces && !_hudState.value.aeAfLocked && !_hudState.value.isFrontCamera && now - lastFaceMeteringMs > 2000L) {
+                    lastFaceMeteringMs = now
                     cameraController.applyFaceMetering(faces.faces.map { it.bounds })
 
                     val primary = faces.primaryFace ?: return@collect
@@ -216,11 +241,10 @@ class CameraViewModel @Inject constructor(
                         ?: primary.leftEyePosition?.y
                         ?: (primary.bounds.top + primary.bounds.bottom) / 2f
 
-                    val now = System.currentTimeMillis()
                     val dx = kotlin.math.abs(focusX - lastFaceFocusX)
                     val dy = kotlin.math.abs(focusY - lastFaceFocusY)
                     val moved = dx > 0.08f || dy > 0.08f
-                    if (moved && now - lastFaceFocusMs > 2000L) {
+                    if (moved && now - lastFaceFocusMs > 3000L) {
                         lastFaceFocusX = focusX
                         lastFaceFocusY = focusY
                         lastFaceFocusMs = now
@@ -307,10 +331,14 @@ class CameraViewModel @Inject constructor(
                     }
                 }
                 if (_hudState.value.mode != CameraMode.PRO && profile.settings != lastAppliedSettings) {
+                    val now = System.currentTimeMillis()
+                    val timeSinceLastApply = now - lastSettingsAppliedMs
+                    if (timeSinceLastApply < 1500L) {
+                        return@collect
+                    }
                     lastAppliedSettings = profile.settings
-                    val state = _hudState.value
-                    val strategy = pipeline.decisionEngine.getExposureStrategy(state.preset, state.sceneConfidence)
-                    applySettingsToHardware(profile.settings, semiAuto = strategy.useSemiAuto)
+                    lastSettingsAppliedMs = now
+                    applySettingsToHardware(profile.settings, semiAuto = false)
                 }
             }
         }
@@ -414,8 +442,7 @@ class CameraViewModel @Inject constructor(
     private fun applySettingsToHardware(settings: CameraSettings, manual: Boolean = false, semiAuto: Boolean = false) {
         try {
             val motionLevel = _hudState.value.motionLevel
-            val useSemiAuto = semiAuto || _hudState.value.settingsDisplayMode == com.spectra.core.model.SettingsDisplayMode.SMART_AUTO
-            cameraController.applySettings(settings, manual, motionLevel, useSemiAuto)
+            cameraController.applySettings(settings, manual, motionLevel, semiAuto)
         } catch (e: Exception) {
             Log.w("CameraViewModel", "Failed to apply camera settings", e)
         }
@@ -762,38 +789,82 @@ class CameraViewModel @Inject constructor(
         }
         try {
             val state = _hudState.value
-            val isHdr = state.isHdrActive && !state.isFrontCamera
-            if (isHdr && state.actualShutterSpeedNs > 0 && state.actualIso > 0) {
-                val evBias = com.spectra.camera.HdrProcessor.computeHighlightEvBias(state.sceneContrast)
-                val hdrUri = captureManager.captureHdrBracket(
-                    imageCapture,
-                    baseExposureNs = state.actualShutterSpeedNs,
-                    baseIso = state.actualIso,
-                    applyBracketSettings = { exposureNs, iso ->
-                        cameraController.applyBracketExposure(exposureNs, iso)
-                    },
-                    restoreAutoExposure = {
-                        resetHardwareToAuto()
-                    },
-                    beautyLevel = state.beautyLevel,
-                    style = state.photoStyle,
-                    isFrontCamera = state.isFrontCamera,
-                    faceRects = lastDetectedFaceRects,
-                    isPortraitMode = state.mode == CameraMode.PORT,
-                    evBias = evBias
-                )
-                _hudState.update { it.copy(
-                    lastCapturedUri = hdrUri,
-                    showCaptureFlash = false,
-                    isCapturing = false,
-                    showReview = true,
-                    reviewUri = hdrUri
-                )}
-                _captureInProgress.value = false
-                return
+            val isHdr = false
+            if (isHdr) {
+                try {
+                    Log.d("CameraViewModel", "HDR capture path")
+                    val evBias = com.spectra.camera.HdrProcessor.computeHighlightEvBias(state.sceneContrast)
+                    val hdrUri = captureManager.captureHdrBracket(
+                        imageCapture,
+                        baseExposureNs = state.actualShutterSpeedNs,
+                        baseIso = state.actualIso,
+                        applyBracketSettings = { exposureNs, iso ->
+                            cameraController.applyBracketExposure(exposureNs, iso)
+                        },
+                        restoreAutoExposure = {
+                            resetHardwareToAuto()
+                        },
+                        beautyLevel = state.beautyLevel,
+                        style = state.photoStyle,
+                        isFrontCamera = state.isFrontCamera,
+                        faceRects = lastDetectedFaceRects,
+                        isPortraitMode = state.mode == CameraMode.PORT,
+                        evBias = evBias
+                    )
+                    _hudState.update { it.copy(
+                        lastCapturedUri = hdrUri,
+                        showCaptureFlash = false,
+                        isCapturing = false,
+                        showSmartReview = true,
+                        bestOriginalUri = hdrUri,
+                        aiEnhancedUri = null,
+                        isEnhancing = true,
+                        captureExplanation = explanation,
+                        showAiExplainer = false
+                    )}
+                    val originalUri = hdrUri
+                    Log.d("CameraViewModel", "HDR saved: $originalUri, starting enhancement...")
+                    viewModelScope.launch {
+                        System.gc()
+                        try {
+                            val processedUri = captureManager.saveProcessedCopy(
+                                originalUri,
+                                state.beautyLevel,
+                                state.photoStyle,
+                                state.isFrontCamera,
+                                true,
+                                lastDetectedFaceRects,
+                                isPortraitMode = state.mode == CameraMode.PORT,
+                                processing = state.processing,
+                                sceneContrast = state.sceneContrast,
+                                captureIso = state.actualIso,
+                                preset = state.preset.name
+                            )
+                            Log.d("CameraViewModel", "HDR Enhancement done (${state.preset.name}): $processedUri")
+                            _hudState.update { it.copy(
+                                aiEnhancedUri = processedUri,
+                                isEnhancing = false
+                            )}
+                        } catch (e: Exception) {
+                            Log.w("CameraViewModel", "HDR processed copy failed", e)
+                            _hudState.update { it.copy(aiEnhancedUri = originalUri, isEnhancing = false) }
+                        } catch (oom: OutOfMemoryError) {
+                            Log.e("CameraViewModel", "HDR OOM during processing", oom)
+                            System.gc()
+                            _hudState.update { it.copy(aiEnhancedUri = originalUri, isEnhancing = false) }
+                        }
+                    }
+                    _captureInProgress.value = false
+                    return
+                } catch (e: Exception) {
+                    Log.w("CameraViewModel", "HDR bracket failed, falling back to normal capture", e)
+                } catch (oom: OutOfMemoryError) {
+                    Log.w("CameraViewModel", "HDR OOM, falling back to normal capture")
+                    System.gc()
+                }
             }
 
-            // existing captureSmartPhoto call follows (unchanged)
+            Log.d("CameraViewModel", "Normal capture path (non-HDR)")
             val result = captureManager.captureSmartPhoto(
                 imageCapture,
                 state.beautyLevel,
@@ -834,10 +905,13 @@ class CameraViewModel @Inject constructor(
                 _hudState.update { it.copy(showAiExplainer = false) }
             }
 
+            val originalUri = result.bestOriginalUri
+            Log.d("CameraViewModel", "Original saved: $originalUri, starting enhancement...")
             viewModelScope.launch {
+                System.gc()
                 try {
                     val processedUri = captureManager.saveProcessedCopy(
-                        result.bestOriginalUri,
+                        originalUri,
                         state.beautyLevel,
                         state.photoStyle,
                         state.isFrontCamera,
@@ -845,8 +919,11 @@ class CameraViewModel @Inject constructor(
                         lastDetectedFaceRects,
                         isPortraitMode = state.mode == CameraMode.PORT,
                         processing = state.processing,
-                        sceneContrast = state.sceneContrast
+                        sceneContrast = state.sceneContrast,
+                        captureIso = state.actualIso,
+                        preset = state.preset.name
                     )
+                    Log.d("CameraViewModel", "Enhancement done (${state.preset.name}): $processedUri")
                     _hudState.update { it.copy(
                         aiEnhancedUri = processedUri,
                         isEnhancing = false
@@ -854,14 +931,14 @@ class CameraViewModel @Inject constructor(
                 } catch (e: Exception) {
                     Log.w("CameraViewModel", "Processed copy failed", e)
                     _hudState.update { it.copy(
-                        aiEnhancedUri = result.bestOriginalUri,
+                        aiEnhancedUri = originalUri,
                         isEnhancing = false
                     )}
                 } catch (oom: OutOfMemoryError) {
                     Log.e("CameraViewModel", "OOM during processing", oom)
                     System.gc()
                     _hudState.update { it.copy(
-                        aiEnhancedUri = result.bestOriginalUri,
+                        aiEnhancedUri = originalUri,
                         isEnhancing = false
                     )}
                 }
