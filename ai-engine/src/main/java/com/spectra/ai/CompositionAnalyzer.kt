@@ -220,7 +220,7 @@ class CompositionAnalyzer @Inject constructor() {
             return CompositionSuggestion(CompositionSuggestion.Direction.ON_THIRDS, 0f)
         }
 
-        val primaryFace = faceRects.maxByOrNull { it.width() * it.height() }
+        val primaryFace = faceRects.maxByOrNull { (it.right - it.left) * (it.bottom - it.top) }
             ?: return CompositionSuggestion(CompositionSuggestion.Direction.ON_THIRDS, 0f)
 
         val subjectX = (primaryFace.left + primaryFace.right) / 2f

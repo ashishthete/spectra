@@ -13,6 +13,15 @@ class CompositionAnalyzerTest {
 
     private val analyzer = CompositionAnalyzer()
 
+    private fun rectF(left: Float, top: Float, right: Float, bottom: Float): RectF {
+        val r = RectF()
+        r.left = left
+        r.top = top
+        r.right = right
+        r.bottom = bottom
+        return r
+    }
+
     @Test
     fun `CompositionResult defaults to centered subject with no suggestion`() {
         val result = CompositionResult()
@@ -95,8 +104,7 @@ class CompositionAnalyzerTest {
 
     @Test
     fun `analyzeSubjectPosition returns ON_THIRDS when face on thirds intersection`() {
-        // Face centered at (1/3, 1/3) — exactly on a thirds point
-        val face = RectF(0.28f, 0.28f, 0.39f, 0.39f) // center ≈ (0.335, 0.335)
+        val face = rectF(0.28f, 0.28f, 0.39f, 0.39f)
         val result = analyzer.analyzeSubjectPosition(listOf(face))
         assertEquals(CompositionSuggestion.Direction.ON_THIRDS, result.direction)
         assertTrue(result.distanceFromThirds < 0.08f)
@@ -104,8 +112,7 @@ class CompositionAnalyzerTest {
 
     @Test
     fun `analyzeSubjectPosition suggests LEFT when face is right of nearest thirds`() {
-        // Face centered at (0.8, 0.33) — to the right of (2/3, 1/3)
-        val face = RectF(0.75f, 0.28f, 0.85f, 0.38f) // center = (0.8, 0.33)
+        val face = rectF(0.75f, 0.28f, 0.85f, 0.38f)
         val result = analyzer.analyzeSubjectPosition(listOf(face))
         assertEquals(CompositionSuggestion.Direction.LEFT, result.direction)
         assertTrue(result.distanceFromThirds > 0.08f)
@@ -113,8 +120,7 @@ class CompositionAnalyzerTest {
 
     @Test
     fun `analyzeSubjectPosition suggests RIGHT when face is left of nearest thirds`() {
-        // Face centered at (0.1, 0.33) — to the left of (1/3, 1/3)
-        val face = RectF(0.05f, 0.28f, 0.15f, 0.38f) // center = (0.1, 0.33)
+        val face = rectF(0.05f, 0.28f, 0.15f, 0.38f)
         val result = analyzer.analyzeSubjectPosition(listOf(face))
         assertEquals(CompositionSuggestion.Direction.RIGHT, result.direction)
         assertTrue(result.distanceFromThirds > 0.08f)
@@ -122,8 +128,7 @@ class CompositionAnalyzerTest {
 
     @Test
     fun `analyzeSubjectPosition suggests UP when face is below nearest thirds`() {
-        // Face centered at (0.33, 0.9) — below (1/3, 2/3)
-        val face = RectF(0.28f, 0.85f, 0.38f, 0.95f) // center = (0.33, 0.9)
+        val face = rectF(0.28f, 0.85f, 0.38f, 0.95f)
         val result = analyzer.analyzeSubjectPosition(listOf(face))
         assertEquals(CompositionSuggestion.Direction.UP, result.direction)
         assertTrue(result.distanceFromThirds > 0.08f)
@@ -131,8 +136,7 @@ class CompositionAnalyzerTest {
 
     @Test
     fun `analyzeSubjectPosition suggests DOWN when face is above nearest thirds`() {
-        // Face centered at (0.33, 0.1) — above (1/3, 1/3)
-        val face = RectF(0.28f, 0.05f, 0.38f, 0.15f) // center = (0.33, 0.1)
+        val face = rectF(0.28f, 0.05f, 0.38f, 0.15f)
         val result = analyzer.analyzeSubjectPosition(listOf(face))
         assertEquals(CompositionSuggestion.Direction.DOWN, result.direction)
         assertTrue(result.distanceFromThirds > 0.08f)
@@ -140,11 +144,9 @@ class CompositionAnalyzerTest {
 
     @Test
     fun `analyzeSubjectPosition uses largest face as primary`() {
-        // Small face near thirds, large face far from thirds
-        val smallFace = RectF(0.30f, 0.30f, 0.36f, 0.36f) // center = (0.33, 0.33)
-        val largeFace = RectF(0.70f, 0.10f, 0.95f, 0.25f) // center = (0.825, 0.175)
+        val smallFace = rectF(0.30f, 0.30f, 0.36f, 0.36f)
+        val largeFace = rectF(0.80f, 0.25f, 0.95f, 0.42f)
         val result = analyzer.analyzeSubjectPosition(listOf(smallFace, largeFace))
-        // Should analyze based on largeFace, which is right of (2/3, 1/3) → LEFT
         assertEquals(CompositionSuggestion.Direction.LEFT, result.direction)
     }
 }
