@@ -29,8 +29,6 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-private val tiltOrange = Color(0xFFFF6B35)
-
 @Composable
 fun LevelIndicator(
     angle: Float,
@@ -41,9 +39,10 @@ fun LevelIndicator(
     val isTilted = absAngle >= 5.0f
     val displayAngle = if (isLevel) 0f else angle
 
+    val amberWarning = HudColors.accent
     val lineColor = when {
         isLevel -> HudColors.success.copy(alpha = 0.8f)
-        isTilted -> tiltOrange.copy(alpha = 0.8f)
+        isTilted -> amberWarning.copy(alpha = 0.8f)
         else -> Color.White.copy(alpha = 0.4f)
     }
 
@@ -84,7 +83,7 @@ fun LevelIndicator(
         ) {
             Text(
                 text = "${absAngle.roundToInt()}°",
-                color = tiltOrange,
+                color = amberWarning,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
@@ -106,9 +105,10 @@ fun PitchIndicator(
     val isLevel = absPitch < 5.0f
     val isTilted = absPitch >= 15.0f
 
+    val pitchAmber = HudColors.accent
     val barColor = when {
         isLevel -> HudColors.success.copy(alpha = 0.6f)
-        isTilted -> tiltOrange.copy(alpha = 0.8f)
+        isTilted -> pitchAmber.copy(alpha = 0.8f)
         else -> Color.White.copy(alpha = 0.35f)
     }
 
@@ -160,7 +160,7 @@ fun PitchIndicator(
         ) {
             Text(
                 text = "${absPitch.roundToInt()}°",
-                color = tiltOrange,
+                color = pitchAmber,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,

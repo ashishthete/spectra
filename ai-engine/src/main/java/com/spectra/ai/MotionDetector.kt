@@ -8,11 +8,20 @@ import javax.inject.Singleton
 @Singleton
 class MotionDetector @Inject constructor() {
 
-    enum class MotionType {
-        STATIC,
+    /**
+     * Classifies the source of detected motion by cross-referencing
+     * gyroscope angular velocity with inter-frame pixel differences.
+     *
+     * - STABLE:         low gyro + low frame-diff  (tripod / held still)
+     * - CAMERA_SHAKE:   high gyro + high frame-diff (hand tremor)
+     * - SUBJECT_MOTION: low gyro + high frame-diff  (moving subject, camera steady)
+     * - PANNING:        high gyro + low frame-diff   (intentional pan, static subject)
+     */
+    enum class MotionSource {
+        STABLE,
         CAMERA_SHAKE,
         SUBJECT_MOTION,
-        PAN
+        PANNING
     }
 
     private val frameBuffer = ArrayDeque<FloatArray>(3)
@@ -21,7 +30,7 @@ class MotionDetector @Inject constructor() {
     var currentMotion: MotionLevel = MotionLevel.STATIC
         private set
 
-    var currentMotionType: MotionType = MotionType.STATIC
+    var currentMotionSource: MotionSource = MotionSource.STABLE
         private set
 
     private var lastGyroVelocity: Float = 0f
@@ -33,7 +42,7 @@ class MotionDetector @Inject constructor() {
         if (frameBuffer.size > 3) frameBuffer.removeFirst()
         lastFrameDiff = computeFrameDiff()
         currentMotion = classifyMotionLevel(lastFrameDiff)
-        currentMotionType = classifyMotionType()
+        currentMotionSource = classifyMotionSource(lastGyroVelocity, lastFrameDiff, lastConsistentFrames)
     }
 
     fun addBitmap(bitmap: Bitmap) {
@@ -51,7 +60,7 @@ class MotionDetector @Inject constructor() {
     fun updateGyro(angularVelocity: Float, consistentFrames: Int) {
         lastGyroVelocity = angularVelocity
         lastConsistentFrames = consistentFrames
-        currentMotionType = classifyMotionType()
+        currentMotionSource = classifyMotionSource(lastGyroVelocity, lastFrameDiff, lastConsistentFrames)
     }
 
     private fun computeFrameDiff(): Float {
@@ -78,22 +87,43 @@ class MotionDetector @Inject constructor() {
         }
     }
 
-    private fun classifyMotionType(): MotionType {
-        val omega = lastGyroVelocity
-        val diff = lastFrameDiff
-
+    /**
+     * Classify the source of motion from gyro magnitude, frame difference,
+     * and directional consistency.
+     *
+     * Thresholds:
+     *  - gyro >= 0.5 rad/s  -> camera is moving significantly
+     *  - frame-diff >= 0.05 -> visible change between consecutive frames
+     *  - For panning: lower gyro threshold (0.3 rad/s) but requires
+     *    >= 5 consistent-direction frames to distinguish from erratic shake.
+     *
+     * This method is public so callers can classify arbitrary sensor
+     * readings without feeding frames through the detector.
+     */
+    fun classifyMotionSource(
+        gyroMagnitude: Float,
+        frameDiff: Float,
+        consistentFrames: Int = 0
+    ): MotionSource {
         return when {
-            omega > 0.3f && lastConsistentFrames >= 5 && diff > 0.05f -> MotionType.PAN
-            omega > 0.5f && diff > 0.05f -> MotionType.CAMERA_SHAKE
-            omega < 0.2f && diff > 0.08f -> MotionType.SUBJECT_MOTION
-            else -> MotionType.STATIC
+            // Panning: moderate+ gyro in a consistent direction with frame change
+            gyroMagnitude > 0.3f && consistentFrames >= 5 && frameDiff > 0.05f ->
+                MotionSource.PANNING
+            // Camera shake: high gyro + noticeable frame change
+            gyroMagnitude > 0.5f && frameDiff > 0.05f ->
+                MotionSource.CAMERA_SHAKE
+            // Subject motion: camera still but scene changing
+            gyroMagnitude < 0.2f && frameDiff > 0.08f ->
+                MotionSource.SUBJECT_MOTION
+            // Everything else is effectively stable
+            else -> MotionSource.STABLE
         }
     }
 
     fun reset() {
         frameBuffer.clear()
         currentMotion = MotionLevel.STATIC
-        currentMotionType = MotionType.STATIC
+        currentMotionSource = MotionSource.STABLE
         lastGyroVelocity = 0f
         lastConsistentFrames = 0
         lastFrameDiff = 0f

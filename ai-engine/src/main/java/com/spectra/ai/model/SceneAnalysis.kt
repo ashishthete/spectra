@@ -8,7 +8,7 @@ data class SceneAnalysis(
     val confidence: Float = 0f,
     val lighting: LightingCondition = LightingCondition.UNKNOWN,
     val motionLevel: MotionLevel = MotionLevel.STATIC,
-    val motionType: MotionDetector.MotionType = MotionDetector.MotionType.STATIC,
+    val motionSource: MotionDetector.MotionSource = MotionDetector.MotionSource.STABLE,
     val distanceRange: DistanceRange = DistanceRange.INFINITY,
     val faceData: FaceData = FaceData.EMPTY,
     val timestampMs: Long = System.currentTimeMillis()

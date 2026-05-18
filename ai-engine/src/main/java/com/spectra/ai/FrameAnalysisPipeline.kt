@@ -23,7 +23,7 @@ class FrameAnalysisPipeline @Inject constructor(
     private val lightingAnalyzer: LightingAnalyzer,
     private val motionDetector: MotionDetector,
     private val distanceEstimator: DistanceEstimator,
-    private val decisionEngine: DecisionEngine,
+    val decisionEngine: DecisionEngine,
     private val presetEngine: PresetEngine,
     private val coachingEngine: CoachingEngine,
     private val compositionAnalyzer: CompositionAnalyzer,
@@ -109,7 +109,7 @@ class FrameAnalysisPipeline @Inject constructor(
 
         motionDetector.addBitmap(bitmap)
         motionDetector.updateGyro(gyroAngularVelocity, gyroConsistentFrames)
-        val motionType = motionDetector.currentMotionType
+        val motionSource = motionDetector.currentMotionSource
         val motion = motionDetector.currentMotion
 
         val distance = distanceEstimator.estimateFromFocusDistance(focusDistanceDiopters)
@@ -130,14 +130,14 @@ class FrameAnalysisPipeline @Inject constructor(
             confidence = confidence,
             lighting = finalLighting,
             motionLevel = motion,
-            motionType = motionType,
+            motionSource = motionSource,
             distanceRange = distance,
             faceData = currentFaceData
         )
         _analysis.value = sceneAnalysis
 
         if (sceneAnalysis.isStable) {
-            _coachingHint.value = coachingEngine.generateCoaching(sceneAnalysis, preset, compositionResult)
+            _coachingHint.value = coachingEngine.generateCoaching(sceneAnalysis, preset, compositionResult, rollAngleDegrees)
         }
 
         if (sceneAnalysis.isActionable) {

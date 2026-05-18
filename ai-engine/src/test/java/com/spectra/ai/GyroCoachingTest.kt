@@ -16,7 +16,7 @@ class GyroCoachingTest {
             confidence = 0.9f,
             lighting = LightingCondition.BRIGHT_DAYLIGHT,
             motionLevel = MotionLevel.MODERATE,
-            motionType = MotionDetector.MotionType.CAMERA_SHAKE,
+            motionSource = MotionDetector.MotionSource.CAMERA_SHAKE,
             distanceRange = DistanceRange.FAR
         )
         val hint = engine.generateCoaching(analysis, CameraPreset.LANDSCAPE)
@@ -32,7 +32,7 @@ class GyroCoachingTest {
             confidence = 0.9f,
             lighting = LightingCondition.BRIGHT_DAYLIGHT,
             motionLevel = MotionLevel.FAST,
-            motionType = MotionDetector.MotionType.SUBJECT_MOTION,
+            motionSource = MotionDetector.MotionSource.SUBJECT_MOTION,
             distanceRange = DistanceRange.MID
         )
         val hint = engine.generateCoaching(analysis, CameraPreset.ACTION)
@@ -48,7 +48,7 @@ class GyroCoachingTest {
             confidence = 0.9f,
             lighting = LightingCondition.BRIGHT_DAYLIGHT,
             motionLevel = MotionLevel.MODERATE,
-            motionType = MotionDetector.MotionType.PAN,
+            motionSource = MotionDetector.MotionSource.PANNING,
             distanceRange = DistanceRange.MID
         )
         val hint = engine.generateCoaching(analysis, CameraPreset.ACTION)
@@ -57,14 +57,14 @@ class GyroCoachingTest {
     }
 
     @Test
-    fun `static motion type does not override preset hints`() {
+    fun `static motion source does not override preset hints`() {
         val engine = CoachingEngine()
         val analysis = SceneAnalysis(
             sceneType = SceneType.FOOD,
             confidence = 0.9f,
             lighting = LightingCondition.BRIGHT_DAYLIGHT,
             motionLevel = MotionLevel.STATIC,
-            motionType = MotionDetector.MotionType.STATIC,
+            motionSource = MotionDetector.MotionSource.STABLE,
             distanceRange = DistanceRange.NEAR
         )
         val hint = engine.generateCoaching(analysis, CameraPreset.FOOD)

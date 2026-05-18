@@ -9,13 +9,13 @@ class MotionTypeTest {
     private val detector = MotionDetector()
 
     @Test
-    fun `STATIC when gyro still and no frame diff`() {
+    fun `STABLE when gyro still and no frame diff`() {
         val frame = FloatArray(100) { 0.5f }
         detector.addFrame(frame)
         detector.addFrame(frame.clone())
         detector.updateGyro(0.1f, consistentFrames = 0)
 
-        assertThat(detector.currentMotionType).isEqualTo(MotionDetector.MotionType.STATIC)
+        assertThat(detector.currentMotionSource).isEqualTo(MotionDetector.MotionSource.STABLE)
     }
 
     @Test
@@ -26,7 +26,7 @@ class MotionTypeTest {
         detector.addFrame(frame2)
         detector.updateGyro(0.8f, consistentFrames = 1)
 
-        assertThat(detector.currentMotionType).isEqualTo(MotionDetector.MotionType.CAMERA_SHAKE)
+        assertThat(detector.currentMotionSource).isEqualTo(MotionDetector.MotionSource.CAMERA_SHAKE)
     }
 
     @Test
@@ -37,25 +37,25 @@ class MotionTypeTest {
         detector.addFrame(frame2)
         detector.updateGyro(0.1f, consistentFrames = 0)
 
-        assertThat(detector.currentMotionType).isEqualTo(MotionDetector.MotionType.SUBJECT_MOTION)
+        assertThat(detector.currentMotionSource).isEqualTo(MotionDetector.MotionSource.SUBJECT_MOTION)
     }
 
     @Test
-    fun `PAN when gyro consistent direction and frame diff`() {
+    fun `PANNING when gyro consistent direction and frame diff`() {
         val frame1 = FloatArray(100) { 0.5f }
         val frame2 = FloatArray(100) { 0.6f }
         detector.addFrame(frame1)
         detector.addFrame(frame2)
         detector.updateGyro(0.4f, consistentFrames = 6)
 
-        assertThat(detector.currentMotionType).isEqualTo(MotionDetector.MotionType.PAN)
+        assertThat(detector.currentMotionSource).isEqualTo(MotionDetector.MotionSource.PANNING)
     }
 
     @Test
-    fun `MotionType has all expected values`() {
-        val types = MotionDetector.MotionType.values()
-        assertThat(types.map { it.name }).containsExactly(
-            "STATIC", "CAMERA_SHAKE", "SUBJECT_MOTION", "PAN"
+    fun `MotionSource has all expected values`() {
+        val sources = MotionDetector.MotionSource.values()
+        assertThat(sources.map { it.name }).containsExactly(
+            "STABLE", "CAMERA_SHAKE", "SUBJECT_MOTION", "PANNING"
         )
     }
 
@@ -69,15 +69,55 @@ class MotionTypeTest {
     }
 
     @Test
-    fun `reset clears motion type`() {
+    fun `reset clears motion source`() {
         val frame1 = FloatArray(100) { 0.5f }
         val frame2 = FloatArray(100) { 0.6f }
         detector.addFrame(frame1)
         detector.addFrame(frame2)
         detector.updateGyro(0.8f, consistentFrames = 1)
-        assertThat(detector.currentMotionType).isNotEqualTo(MotionDetector.MotionType.STATIC)
+        assertThat(detector.currentMotionSource).isNotEqualTo(MotionDetector.MotionSource.STABLE)
 
         detector.reset()
-        assertThat(detector.currentMotionType).isEqualTo(MotionDetector.MotionType.STATIC)
+        assertThat(detector.currentMotionSource).isEqualTo(MotionDetector.MotionSource.STABLE)
+    }
+
+    // --- Tests for the public classifyMotionSource method ---
+
+    @Test
+    fun `classifyMotionSource returns STABLE for low gyro and low diff`() {
+        assertThat(detector.classifyMotionSource(0.1f, 0.02f))
+            .isEqualTo(MotionDetector.MotionSource.STABLE)
+    }
+
+    @Test
+    fun `classifyMotionSource returns CAMERA_SHAKE for high gyro and high diff`() {
+        assertThat(detector.classifyMotionSource(0.6f, 0.1f))
+            .isEqualTo(MotionDetector.MotionSource.CAMERA_SHAKE)
+    }
+
+    @Test
+    fun `classifyMotionSource returns SUBJECT_MOTION for low gyro and high diff`() {
+        assertThat(detector.classifyMotionSource(0.1f, 0.15f))
+            .isEqualTo(MotionDetector.MotionSource.SUBJECT_MOTION)
+    }
+
+    @Test
+    fun `classifyMotionSource returns PANNING for consistent directional gyro`() {
+        assertThat(detector.classifyMotionSource(0.4f, 0.06f, consistentFrames = 6))
+            .isEqualTo(MotionDetector.MotionSource.PANNING)
+    }
+
+    @Test
+    fun `classifyMotionSource returns STABLE when gyro high but diff low and not consistent`() {
+        // High gyro, low diff, not enough consistent frames -> STABLE
+        assertThat(detector.classifyMotionSource(0.6f, 0.02f, consistentFrames = 2))
+            .isEqualTo(MotionDetector.MotionSource.STABLE)
+    }
+
+    @Test
+    fun `classifyMotionSource mid-range gyro without consistency falls to STABLE`() {
+        // Gyro between 0.2 and 0.5, diff below 0.08 -> STABLE (falls through all branches)
+        assertThat(detector.classifyMotionSource(0.3f, 0.04f, consistentFrames = 0))
+            .isEqualTo(MotionDetector.MotionSource.STABLE)
     }
 }
