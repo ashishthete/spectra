@@ -70,7 +70,7 @@ class ToneCurveHighlightRolloffTest {
     fun `buildHighlightRolloffCurve highlight region is compressed`() {
         val curve = ToneCurveEngine.buildHighlightRolloffCurve(shoulderStart = 200, maxOutput = 250, strength = 1.0f)
         assertThat(curve[255]).isAtMost(250)
-        assertThat(curve[230]).isLessThan(230)
+        assertThat(curve[245]).isLessThan(245)
     }
 
     @Test

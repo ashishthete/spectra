@@ -1,5 +1,6 @@
 package com.spectra.camera
 
+import android.content.res.AssetManager
 import android.graphics.Bitmap
 import android.util.Log
 import com.spectra.core.model.PhotoStyle
@@ -8,6 +9,33 @@ import kotlin.math.roundToInt
 object ToneCurveEngine {
 
     private const val TAG = "ToneCurveEngine"
+
+    /** Loaded 3D LUTs keyed by PhotoStyle.  Null until [loadLuts] is called. */
+    private var luts: Map<PhotoStyle, Pair<Int, FloatArray>>? = null
+
+    /**
+     * Load .cube LUT files from the assets directory.
+     * Call once during app initialisation (e.g. from Application.onCreate).
+     */
+    fun loadLuts(assetManager: AssetManager) {
+        val mapping = mapOf(
+            PhotoStyle.VIVID     to "lut_vivid.cube",
+            PhotoStyle.WARM      to "lut_warm.cube",
+            PhotoStyle.FILM      to "lut_film.cube",
+            PhotoStyle.CINEMATIC to "lut_cinematic.cube"
+        )
+        val loaded = mutableMapOf<PhotoStyle, Pair<Int, FloatArray>>()
+        for ((style, filename) in mapping) {
+            try {
+                val cubeText = assetManager.open(filename).bufferedReader().use { it.readText() }
+                loaded[style] = Lut3D.parse(cubeText)
+                Log.d(TAG, "Loaded 3D LUT for $style from $filename (size=${loaded[style]!!.first})")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to load LUT $filename for $style, will fall back to 1D curves", e)
+            }
+        }
+        luts = loaded
+    }
 
     data class ChannelCurves(
         val r: IntArray,
@@ -148,8 +176,9 @@ object ToneCurveEngine {
         if (strength <= 0f || input <= shoulderStart) return input
         val range = (255 - shoulderStart).coerceAtLeast(1)
         val t = (input - shoulderStart).toFloat() / range
-        val tEased = Math.pow(t.toDouble(), 1.5).toFloat()
-        val shoulderOutput = shoulderStart + (maxOutput - shoulderStart) * tEased
+        val whiteScale = hableFilmic(1f)
+        val tFilmic = hableFilmic(t) / whiteScale
+        val shoulderOutput = shoulderStart + (maxOutput - shoulderStart) * tFilmic
         val result = input + strength * (shoulderOutput - input)
         return result.toInt().coerceIn(shoulderStart, maxOutput)
     }
@@ -162,22 +191,31 @@ object ToneCurveEngine {
         if (style == PhotoStyle.NATURAL) return
 
         val startTime = System.nanoTime()
-        val curves = getCurvesForStyle(style)
         val w = bitmap.width
         val h = bitmap.height
         val pixels = IntArray(w * h)
         bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
 
-        for (i in pixels.indices) {
-            val pixel = pixels[i]
-            val r = curves.r[(pixel shr 16) and 0xFF]
-            val g = curves.g[(pixel shr 8) and 0xFF]
-            val b = curves.b[pixel and 0xFF]
-            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        // Prefer 3D LUT when loaded; fall back to 1D per-channel curves.
+        val lutEntry = luts?.get(style)
+        if (lutEntry != null) {
+            val (lutSize, lutData) = lutEntry
+            Lut3D.applyToPixels(pixels, lutData, lutSize)
+            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+            val elapsed = (System.nanoTime() - startTime) / 1_000_000
+            Log.d(TAG, "3D LUT applied: style=$style, ${elapsed}ms")
+        } else {
+            val curves = getCurvesForStyle(style)
+            for (i in pixels.indices) {
+                val pixel = pixels[i]
+                val r = curves.r[(pixel shr 16) and 0xFF]
+                val g = curves.g[(pixel shr 8) and 0xFF]
+                val b = curves.b[pixel and 0xFF]
+                pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+            val elapsed = (System.nanoTime() - startTime) / 1_000_000
+            Log.d(TAG, "1D tone curve applied (fallback): style=$style, ${elapsed}ms")
         }
-
-        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
-        val elapsed = (System.nanoTime() - startTime) / 1_000_000
-        Log.d(TAG, "Tone curve applied: style=$style, ${elapsed}ms")
     }
 }
