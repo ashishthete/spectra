@@ -1,6 +1,7 @@
 package com.spectra.ai
 
 import com.spectra.ai.model.*
+import com.spectra.ai.model.CompositionResult
 import com.spectra.core.model.CameraPreset
 import com.spectra.core.model.SceneType
 import javax.inject.Inject
@@ -15,7 +16,7 @@ class CoachingEngine @Inject constructor() {
     private var hintsShownThisSession = 0
     private var lastDismissTimeMs: Long = 0L
 
-    fun generateCoaching(analysis: SceneAnalysis, preset: CameraPreset): CoachingHint? {
+    fun generateCoaching(analysis: SceneAnalysis, preset: CameraPreset, composition: CompositionResult? = null): CoachingHint? {
         if (!analysis.isStable) return null
         if (hintsShownThisSession > 20) return null
 
@@ -23,7 +24,7 @@ class CoachingEngine @Inject constructor() {
         if (now - lastDismissTimeMs < 15000L) return null
         if (lastHint != null && now - lastHintTimeMs < hintCooldownMs) return lastHint
 
-        val hint = when {
+        var hint = when {
             analysis.motionType == MotionDetector.MotionType.CAMERA_SHAKE ->
                 cameraShakeHint(preset)
             analysis.motionType == MotionDetector.MotionType.SUBJECT_MOTION ->
@@ -34,6 +35,11 @@ class CoachingEngine @Inject constructor() {
                 motionHint(analysis, preset)
             analysis.lighting == LightingCondition.BACKLIT -> backlitHint(preset)
             else -> presetHint(preset, analysis)
+        }
+
+        // Composition/horizon coaching (lower priority than motion/backlit hints)
+        if (hint == null && composition != null) {
+            hint = compositionHint(composition)
         }
 
         if (hint != null && hint != lastHint) {
@@ -316,6 +322,16 @@ class CoachingEngine @Inject constructor() {
                 CoachingHint("Macro needs light — use a lamp or move to window", ArrowDirection.NONE, priority = 6)
             else -> CoachingHint("Get as close as possible — let autofocus lock", ArrowDirection.NONE, priority = 4)
         }
+    }
+
+    private fun compositionHint(composition: CompositionResult): CoachingHint? {
+        if (composition.needsLeveling && composition.suggestionText != null) {
+            return CoachingHint(composition.suggestionText, composition.suggestionArrow, priority = 6)
+        }
+        if (composition.thirdsScore < 0.5f && composition.suggestionText != null) {
+            return CoachingHint(composition.suggestionText, composition.suggestionArrow, priority = 3)
+        }
+        return null
     }
 
     fun reset() {

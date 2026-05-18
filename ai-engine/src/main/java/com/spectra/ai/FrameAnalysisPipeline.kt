@@ -3,6 +3,7 @@ package com.spectra.ai
 import android.graphics.Bitmap
 import com.spectra.ai.cloud.CloudCoachingManager
 import com.spectra.ai.model.*
+import com.spectra.ai.model.CompositionResult
 import com.spectra.core.model.CameraMode
 import com.spectra.core.model.CameraPreset
 import com.spectra.core.model.CameraSettings
@@ -24,6 +25,7 @@ class FrameAnalysisPipeline @Inject constructor(
     private val decisionEngine: DecisionEngine,
     private val presetEngine: PresetEngine,
     private val coachingEngine: CoachingEngine,
+    private val compositionAnalyzer: CompositionAnalyzer,
     val cloudCoachingManager: CloudCoachingManager,
     val faceDetector: FaceDetectorWrapper
 ) {
@@ -51,6 +53,9 @@ class FrameAnalysisPipeline @Inject constructor(
 
     private val _coachingHint = MutableStateFlow<CoachingHint?>(null)
     val coachingHint: StateFlow<CoachingHint?> = _coachingHint.asStateFlow()
+
+    private val _compositionResult = MutableStateFlow(CompositionResult())
+    val compositionResult: StateFlow<CompositionResult> = _compositionResult.asStateFlow()
 
     val cloudCoachingHint: StateFlow<CoachingHint?> = cloudCoachingManager.cloudHint
 
@@ -94,6 +99,18 @@ class FrameAnalysisPipeline @Inject constructor(
 
         val distance = distanceEstimator.estimateFromFocusDistance(focusDistanceDiopters)
 
+        // Composition analysis
+        val faceRects = if (currentFaceData.hasFaces) {
+            currentFaceData.faces.map { it.bounds }
+        } else {
+            emptyList()
+        }
+        val compositionResult = compositionAnalyzer.analyze(
+            pixels, bitmap.width, bitmap.height,
+            faceRects, 0f
+        )
+        _compositionResult.value = compositionResult
+
         val sceneAnalysis = SceneAnalysis(
             sceneType = sceneType,
             confidence = confidence,
@@ -106,7 +123,7 @@ class FrameAnalysisPipeline @Inject constructor(
         _analysis.value = sceneAnalysis
 
         if (sceneAnalysis.isStable) {
-            _coachingHint.value = coachingEngine.generateCoaching(sceneAnalysis, preset)
+            _coachingHint.value = coachingEngine.generateCoaching(sceneAnalysis, preset, compositionResult)
         }
 
         if (sceneAnalysis.isActionable) {
