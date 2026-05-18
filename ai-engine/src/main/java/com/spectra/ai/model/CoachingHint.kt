@@ -7,5 +7,6 @@ enum class ArrowDirection {
 data class CoachingHint(
     val text: String,
     val arrow: ArrowDirection = ArrowDirection.NONE,
-    val priority: Int = 0
+    val priority: Int = 0,
+    val action: CoachingAction? = null
 )

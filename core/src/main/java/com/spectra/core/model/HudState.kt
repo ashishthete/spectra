@@ -18,6 +18,9 @@ data class HudState(
     val coachingArrow: String = "NONE",
     val cloudCoachingText: String? = null,
     val cloudCoachingArrow: String = "NONE",
+    val coachingActionLabel: String? = null,
+    val coachingActionType: String? = null,
+    val coachingActionPayload: String? = null,
 
     val lensMatchScores: Map<LensId, Float> = LensId.entries.associateWith {
         if (it == activeLens) 1.0f else 0f
