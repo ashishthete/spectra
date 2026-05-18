@@ -70,7 +70,9 @@ class FrameAnalysisPipeline @Inject constructor(
         focusDistanceDiopters: Float = 0f,
         exposureTimeNs: Long = 0L,
         iso: Int = 100,
-        colorTemperature: Int = 5500
+        colorTemperature: Int = 5500,
+        gyroAngularVelocity: Float = 0f,
+        gyroConsistentFrames: Int = 0
     ) {
         val currentFaceData = faceDetector.faceData.value
         val (sceneType, confidence) = sceneClassifier.classify(bitmap, isFrontCamera, currentFaceData)
@@ -83,9 +85,11 @@ class FrameAnalysisPipeline @Inject constructor(
         } else {
             colorTemperature
         }
-        val lighting = lightingAnalyzer.analyzeFromMetadata(avgBrightness, exposureTimeNs, iso, estimatedCt)
+        val lighting = lightingAnalyzer.analyzeFromMetadata(avgBrightness, exposureTimeNs, iso, estimatedCt, lightingAnalyzer.lastBrightnessVariance)
 
         motionDetector.addBitmap(bitmap)
+        motionDetector.updateGyro(gyroAngularVelocity, gyroConsistentFrames)
+        val motionType = motionDetector.currentMotionType
         val motion = motionDetector.currentMotion
 
         val distance = distanceEstimator.estimateFromFocusDistance(focusDistanceDiopters)
@@ -95,13 +99,14 @@ class FrameAnalysisPipeline @Inject constructor(
             confidence = confidence,
             lighting = lighting,
             motionLevel = motion,
+            motionType = motionType,
             distanceRange = distance,
             faceData = currentFaceData
         )
         _analysis.value = sceneAnalysis
 
         if (sceneAnalysis.isStable) {
-            _coachingHint.value = coachingEngine.generateCoaching(sceneAnalysis, mode)
+            _coachingHint.value = coachingEngine.generateCoaching(sceneAnalysis, preset)
         }
 
         if (sceneAnalysis.isActionable) {
@@ -123,6 +128,7 @@ class FrameAnalysisPipeline @Inject constructor(
         val thumb = Bitmap.createScaledBitmap(bitmap, thumbSize, thumbSize, true)
         val thumbPixels = IntArray(thumbSize * thumbSize)
         thumb.getPixels(thumbPixels, 0, thumbSize, 0, 0, thumbSize, thumbSize)
+        thumb.recycle()
         cloudCoachingManager.onFrameAnalyzed(thumbPixels, sceneAnalysis.sceneType.label, sceneAnalysis.lighting.label)
     }
 
