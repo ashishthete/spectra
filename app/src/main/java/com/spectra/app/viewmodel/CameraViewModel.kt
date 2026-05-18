@@ -359,7 +359,7 @@ class CameraViewModel @Inject constructor(
         }
     }
 
-    @OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+
     private fun applySettingsToHardware(settings: CameraSettings, manual: Boolean = false) {
         try {
             val motionLevel = _hudState.value.motionLevel
@@ -370,7 +370,7 @@ class CameraViewModel @Inject constructor(
         }
     }
 
-    @OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+
     private fun resetHardwareToAuto() {
         try {
             cameraController.resetToAuto()
@@ -500,7 +500,7 @@ class CameraViewModel @Inject constructor(
     fun flipCamera() { cameraController.flipCamera() }
     fun switchLens(lens: LensId) { cameraController.switchLens(lens) }
 
-    @OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+
     fun setMode(mode: CameraMode) {
         val previous = _hudState.value.mode
         if (previous == CameraMode.VIDEO && _hudState.value.isRecording) {
@@ -689,7 +689,7 @@ class CameraViewModel @Inject constructor(
         _hudState.update { it.copy(timerCountdown = 0) }
     }
 
-    @OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+
     private suspend fun capturePhotoInternal() {
         val imageCapture = cameraController.getImageCapture()
         if (imageCapture == null) {
@@ -785,7 +785,17 @@ class CameraViewModel @Inject constructor(
                     )}
                 } catch (e: Exception) {
                     Log.w("CameraViewModel", "Processed copy failed", e)
-                    _hudState.update { it.copy(isEnhancing = false) }
+                    _hudState.update { it.copy(
+                        aiEnhancedUri = result.bestOriginalUri,
+                        isEnhancing = false
+                    )}
+                } catch (oom: OutOfMemoryError) {
+                    Log.e("CameraViewModel", "OOM during processing", oom)
+                    System.gc()
+                    _hudState.update { it.copy(
+                        aiEnhancedUri = result.bestOriginalUri,
+                        isEnhancing = false
+                    )}
                 }
             }
         } catch (e: Exception) {
