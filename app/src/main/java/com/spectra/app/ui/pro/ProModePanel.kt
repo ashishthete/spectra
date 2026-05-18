@@ -66,6 +66,26 @@ private enum class ProParam(val label: String) {
         FOCUS -> if (s.focusDistance == 0f) "AF" else "${"%.1f".format(s.focusDistance)}m"
     }
 
+    val isLogScale: Boolean get() = this == ISO || this == SHUTTER
+
+    fun toSliderPosition(value: Float): Float {
+        val r = range
+        if (!isLogScale) return value
+        val logMin = kotlin.math.ln(r.start.coerceAtLeast(1f))
+        val logMax = kotlin.math.ln(r.endInclusive)
+        val logVal = kotlin.math.ln(value.coerceIn(r.start, r.endInclusive).coerceAtLeast(1f))
+        return ((logVal - logMin) / (logMax - logMin)) * (r.endInclusive - r.start) + r.start
+    }
+
+    fun fromSliderPosition(position: Float): Float {
+        val r = range
+        if (!isLogScale) return position
+        val logMin = kotlin.math.ln(r.start.coerceAtLeast(1f))
+        val logMax = kotlin.math.ln(r.endInclusive)
+        val t = (position - r.start) / (r.endInclusive - r.start)
+        return kotlin.math.exp(logMin + t * (logMax - logMin))
+    }
+
     val range: ClosedFloatingPointRange<Float> get() = when (this) {
         ISO -> 50f..3200f
         SHUTTER -> 1f..8000f
@@ -230,8 +250,9 @@ fun ProModePanel(
 
             Box {
                 Slider(
-                    value = selectedParam.getValue(settings),
-                    onValueChange = { value ->
+                    value = selectedParam.toSliderPosition(selectedParam.getValue(settings)),
+                    onValueChange = { sliderPos ->
+                        val value = selectedParam.fromSliderPosition(sliderPos)
                         when (selectedParam) {
                             ProParam.ISO -> onIsoChange(value.toInt())
                             ProParam.SHUTTER -> onShutterChange(value.toInt())
@@ -248,7 +269,7 @@ fun ProModePanel(
                     )
                 )
 
-                val ghostValue = selectedParam.getValue(aiSettings)
+                val ghostValue = selectedParam.toSliderPosition(selectedParam.getValue(aiSettings))
                 val range = selectedParam.range
                 val fraction = if (range.endInclusive != range.start) {
                     ((ghostValue - range.start) / (range.endInclusive - range.start))
