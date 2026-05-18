@@ -1262,5 +1262,135 @@ class CaptureManager @Inject constructor(
 
             bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
         }
+
+        fun beautyBilateralRadius(beautyLevel: Int): Int {
+            return when (beautyLevel) {
+                1 -> 3
+                2 -> 5
+                3 -> 8
+                else -> 0
+            }
+        }
+
+        fun applyLabBeauty(
+            bitmap: android.graphics.Bitmap,
+            canvas: android.graphics.Canvas,
+            beautyLevel: Int,
+            faceRects: List<android.graphics.RectF>
+        ) {
+            if (beautyLevel <= 0 || faceRects.isEmpty()) return
+
+            val w = bitmap.width
+            val h = bitmap.height
+            val radius = beautyBilateralRadius(beautyLevel)
+            val rangeSigma = when (beautyLevel) {
+                1 -> 10.0f
+                2 -> 15.0f
+                3 -> 20.0f
+                else -> 10.0f
+            }
+
+            val pixels = IntArray(w * h)
+            bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+            for (faceNorm in faceRects) {
+                val x0 = (faceNorm.left * w).toInt().coerceIn(0, w - 1)
+                val y0 = (faceNorm.top * h).toInt().coerceIn(0, h - 1)
+                val x1 = (faceNorm.right * w).toInt().coerceIn(0, w - 1)
+                val y1 = (faceNorm.bottom * h).toInt().coerceIn(0, h - 1)
+                val fw = x1 - x0
+                val fh = y1 - y0
+                if (fw <= 0 || fh <= 0) continue
+
+                val skinMask = BooleanArray(fw * fh)
+                val labL = FloatArray(fw * fh)
+                val labA = FloatArray(fw * fh)
+                val labB = FloatArray(fw * fh)
+
+                for (fy in 0 until fh) {
+                    for (fx in 0 until fw) {
+                        val globalIdx = (y0 + fy) * w + (x0 + fx)
+                        val pixel = pixels[globalIdx]
+                        val r = (pixel shr 16) and 0xFF
+                        val g = (pixel shr 8) and 0xFF
+                        val b = pixel and 0xFF
+
+                        val ycbcr = ColorSpaceUtils.rgbToYCbCr(r, g, b)
+                        skinMask[fy * fw + fx] = ColorSpaceUtils.isSkinPixelYCbCr(ycbcr[1], ycbcr[2])
+
+                        val lab = ColorSpaceUtils.rgbToLab(r, g, b)
+                        val localIdx = fy * fw + fx
+                        labL[localIdx] = lab[0]
+                        labA[localIdx] = lab[1]
+                        labB[localIdx] = lab[2]
+                    }
+                }
+
+                val filteredA = bilateralFilterFloat(labA, fw, fh, radius, rangeSigma)
+                val filteredB = bilateralFilterFloat(labB, fw, fh, radius, rangeSigma)
+
+                for (fy in 0 until fh) {
+                    for (fx in 0 until fw) {
+                        val localIdx = fy * fw + fx
+                        if (!skinMask[localIdx]) continue
+
+                        val rgb = ColorSpaceUtils.labToRgb(labL[localIdx], filteredA[localIdx], filteredB[localIdx])
+                        val globalIdx = (y0 + fy) * w + (x0 + fx)
+                        pixels[globalIdx] = (0xFF shl 24) or (rgb[0] shl 16) or (rgb[1] shl 8) or rgb[2]
+                    }
+                }
+            }
+
+            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+            canvas.drawBitmap(bitmap, 0f, 0f, android.graphics.Paint())
+        }
+
+        private fun bilateralFilterFloat(
+            channel: FloatArray,
+            w: Int,
+            h: Int,
+            spatialRadius: Int,
+            rangeSigma: Float
+        ): FloatArray {
+            val output = FloatArray(channel.size)
+            val rangeSigmaSq2 = 2.0f * rangeSigma * rangeSigma
+            val spatialSigma = spatialRadius / 2.0f
+            val spatialSigmaSq2 = 2.0f * spatialSigma * spatialSigma
+
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    val idx = y * w + x
+                    val centerVal = channel[idx]
+                    var weightSum = 0.0f
+                    var valueSum = 0.0f
+
+                    val y0 = maxOf(0, y - spatialRadius)
+                    val y1 = minOf(h - 1, y + spatialRadius)
+                    val x0 = maxOf(0, x - spatialRadius)
+                    val x1 = minOf(w - 1, x + spatialRadius)
+
+                    for (ny in y0..y1) {
+                        for (nx in x0..x1) {
+                            val nIdx = ny * w + nx
+                            val nVal = channel[nIdx]
+
+                            val dx = (nx - x).toFloat()
+                            val dy = (ny - y).toFloat()
+                            val spatialWeight = kotlin.math.exp(-(dx * dx + dy * dy) / spatialSigmaSq2)
+
+                            val rangeDiff = nVal - centerVal
+                            val rangeWeight = kotlin.math.exp(-(rangeDiff * rangeDiff) / rangeSigmaSq2)
+
+                            val weight = spatialWeight * rangeWeight
+                            weightSum += weight
+                            valueSum += nVal * weight
+                        }
+                    }
+
+                    output[idx] = if (weightSum > 0f) valueSum / weightSum else centerVal
+                }
+            }
+            return output
+        }
     }
 }
