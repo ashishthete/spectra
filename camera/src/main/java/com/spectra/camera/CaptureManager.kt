@@ -443,27 +443,39 @@ class CaptureManager @Inject constructor(
 
         val w = bitmaps[0].width
         val h = bitmaps[0].height
-        val sumR = IntArray(w * h)
-        val sumG = IntArray(w * h)
-        val sumB = IntArray(w * h)
-        var validCount = 0
 
+        val allPixels = mutableListOf<IntArray>()
         for (bmp in bitmaps) {
             if (bmp.width != w || bmp.height != h) continue
             val pixels = IntArray(w * h)
             bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+            allPixels.add(pixels)
+        }
+
+        if (allPixels.size < 2) {
+            bitmaps.forEach { it.recycle() }
+            val best = frames.maxBy { (jpegBytes, _) -> scoreSharpness(jpegBytes) }
+            return best
+        }
+
+        val refPixels = allPixels[0]
+        val aligner = TileAligner()
+        val alignedFrames = mutableListOf(refPixels)
+        for (i in 1 until allPixels.size) {
+            val shifts = aligner.estimateTileShifts(refPixels, allPixels[i], w, h)
+            alignedFrames.add(aligner.applyTileShifts(allPixels[i], shifts, w, h))
+        }
+
+        val validCount = alignedFrames.size
+        val sumR = IntArray(w * h)
+        val sumG = IntArray(w * h)
+        val sumB = IntArray(w * h)
+        for (pixels in alignedFrames) {
             for (i in pixels.indices) {
                 sumR[i] += (pixels[i] shr 16) and 0xFF
                 sumG[i] += (pixels[i] shr 8) and 0xFF
                 sumB[i] += pixels[i] and 0xFF
             }
-            validCount++
-        }
-
-        if (validCount < 2) {
-            bitmaps.forEach { it.recycle() }
-            val best = frames.maxBy { (jpegBytes, _) -> scoreSharpness(jpegBytes) }
-            return best
         }
 
         val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
