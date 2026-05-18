@@ -287,20 +287,8 @@ class SceneClassifier @Inject constructor(
         return channel.map(FileChannel.MapMode.READ_ONLY, assetFd.startOffset, assetFd.declaredLength)
     }
 
-    internal fun applyHysteresis(rawScene: SceneType): SceneType {
-        recentScenes.addLast(rawScene)
-        if (recentScenes.size > 5) recentScenes.removeFirst()
-
-        // Count occurrences of each scene in the buffer
-        val counts = recentScenes.groupingBy { it }.eachCount()
-        val majority = counts.maxByOrNull { it.value }
-
-        // Require at least 3 of 5 to switch
-        if (majority != null && majority.value >= 3 && majority.key != stableScene) {
-            stableScene = majority.key
-        }
-
-        return stableScene
+    private fun applyHysteresis(rawScene: SceneType): SceneType {
+        return hysteresis.smooth(rawScene)
     }
 
     fun release() {
