@@ -17,8 +17,10 @@ class CoachingEngine @Inject constructor() {
     private val hintCooldownMs = 10000L
     private var hintsShownThisSession = 0
     private var lastDismissTimeMs: Long = 0L
+    private var horizonDismissCount: Int = 0
+    private var lastHorizonHintWasShown: Boolean = false
 
-    fun generateCoaching(analysis: SceneAnalysis, preset: CameraPreset, composition: CompositionResult? = null): CoachingHint? {
+    fun generateCoaching(analysis: SceneAnalysis, preset: CameraPreset, composition: CompositionResult? = null, rollAngle: Float = 0f): CoachingHint? {
         if (!analysis.isStable) return null
         if (hintsShownThisSession > 20) return null
 
@@ -27,11 +29,11 @@ class CoachingEngine @Inject constructor() {
         if (lastHint != null && now - lastHintTimeMs < hintCooldownMs) return lastHint
 
         var hint = when {
-            analysis.motionType == MotionDetector.MotionType.CAMERA_SHAKE ->
+            analysis.motionSource == MotionDetector.MotionSource.CAMERA_SHAKE ->
                 cameraShakeHint(preset)
-            analysis.motionType == MotionDetector.MotionType.SUBJECT_MOTION ->
+            analysis.motionSource == MotionDetector.MotionSource.SUBJECT_MOTION ->
                 subjectMotionHint(analysis, preset)
-            analysis.motionType == MotionDetector.MotionType.PAN ->
+            analysis.motionSource == MotionDetector.MotionSource.PANNING ->
                 panMotionHint(preset)
             analysis.motionLevel == MotionLevel.FAST || analysis.motionLevel == MotionLevel.VERY_FAST ->
                 motionHint(analysis, preset)
@@ -45,6 +47,21 @@ class CoachingEngine @Inject constructor() {
             hint = compositionHint(composition)
         }
 
+        // Horizon coaching from LevelSensor roll angle (lowest priority)
+        if (hint == null) {
+            val horizonHint = generateHorizonCoaching(rollAngle, horizonDismissCount)
+            if (horizonHint != null) {
+                hint = horizonHint
+                lastHorizonHintWasShown = true
+            } else {
+                // User straightened the horizon — reset dismiss counter
+                if (kotlin.math.abs(rollAngle) < 2f && horizonDismissCount > 0) {
+                    horizonDismissCount = 0
+                }
+                lastHorizonHintWasShown = false
+            }
+        }
+
         if (hint != null && hint != lastHint) {
             lastHint = hint
             lastHintTimeMs = now
@@ -54,9 +71,31 @@ class CoachingEngine @Inject constructor() {
         return hint
     }
 
+    /**
+     * Generate a coaching hint based on the device roll angle from LevelSensor.
+     * Returns null if the horizon is level enough (<2 degrees) or if the user
+     * has dismissed horizon coaching 3+ times (they want a dutch angle).
+     */
+    fun generateHorizonCoaching(rollAngle: Float, dismissCount: Int): CoachingHint? {
+        if (dismissCount >= 3) return null  // user wants dutch angle
+        val absRoll = kotlin.math.abs(rollAngle)
+        if (absRoll < 2f) return null  // level enough
+        val direction = if (rollAngle > 0) "left" else "right"
+        val priority = if (absRoll > 5f) 6 else 4
+        return CoachingHint(
+            text = "Tilt $direction to level the horizon",
+            arrow = if (rollAngle > 0) ArrowDirection.LEFT else ArrowDirection.RIGHT,
+            priority = priority
+        )
+    }
+
     fun onDismissed() {
+        if (lastHorizonHintWasShown) {
+            horizonDismissCount++
+        }
         lastDismissTimeMs = System.currentTimeMillis()
         lastHint = null
+        lastHorizonHintWasShown = false
     }
 
     private fun motionHint(analysis: SceneAnalysis, preset: CameraPreset): CoachingHint {
@@ -260,10 +299,30 @@ class CoachingEngine @Inject constructor() {
         return null
     }
 
+    /**
+     * Generates a human-readable coaching string from a [CompositionSuggestion].
+     * Returns null if the subject is already on thirds or close enough (< 0.12 normalized distance).
+     */
+    fun generateCompositionCoaching(suggestion: CompositionSuggestion): String? {
+        if (suggestion.direction == CompositionSuggestion.Direction.ON_THIRDS) return null
+        if (suggestion.distanceFromThirds < 0.12f) return null  // close enough
+
+        val dirText = when (suggestion.direction) {
+            CompositionSuggestion.Direction.LEFT -> "left"
+            CompositionSuggestion.Direction.RIGHT -> "right"
+            CompositionSuggestion.Direction.UP -> "up"
+            CompositionSuggestion.Direction.DOWN -> "down"
+            CompositionSuggestion.Direction.ON_THIRDS -> return null
+        }
+        return "Move camera $dirText to place subject on thirds"
+    }
+
     fun reset() {
         lastHint = null
         lastHintTimeMs = 0L
         hintsShownThisSession = 0
         lastDismissTimeMs = 0L
+        horizonDismissCount = 0
+        lastHorizonHintWasShown = false
     }
 }

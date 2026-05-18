@@ -129,4 +129,48 @@ class CoachingEngineTest {
         val second = engine.generateCoaching(analysis, CameraPreset.LANDSCAPE)
         assertThat(first).isEqualTo(second)
     }
+
+    // --- generateCompositionCoaching tests ---
+
+    @Test
+    fun `composition coaching returns null when ON_THIRDS`() {
+        val suggestion = CompositionSuggestion(CompositionSuggestion.Direction.ON_THIRDS, 0.02f)
+        val result = engine.generateCompositionCoaching(suggestion)
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun `composition coaching returns null when distance below threshold`() {
+        val suggestion = CompositionSuggestion(CompositionSuggestion.Direction.LEFT, 0.10f)
+        val result = engine.generateCompositionCoaching(suggestion)
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun `composition coaching returns move left text`() {
+        val suggestion = CompositionSuggestion(CompositionSuggestion.Direction.LEFT, 0.20f)
+        val result = engine.generateCompositionCoaching(suggestion)
+        assertThat(result).isEqualTo("Move camera left to place subject on thirds")
+    }
+
+    @Test
+    fun `composition coaching returns move right text`() {
+        val suggestion = CompositionSuggestion(CompositionSuggestion.Direction.RIGHT, 0.25f)
+        val result = engine.generateCompositionCoaching(suggestion)
+        assertThat(result).isEqualTo("Move camera right to place subject on thirds")
+    }
+
+    @Test
+    fun `composition coaching returns move up text`() {
+        val suggestion = CompositionSuggestion(CompositionSuggestion.Direction.UP, 0.30f)
+        val result = engine.generateCompositionCoaching(suggestion)
+        assertThat(result).isEqualTo("Move camera up to place subject on thirds")
+    }
+
+    @Test
+    fun `composition coaching returns move down text`() {
+        val suggestion = CompositionSuggestion(CompositionSuggestion.Direction.DOWN, 0.15f)
+        val result = engine.generateCompositionCoaching(suggestion)
+        assertThat(result).isEqualTo("Move camera down to place subject on thirds")
+    }
 }

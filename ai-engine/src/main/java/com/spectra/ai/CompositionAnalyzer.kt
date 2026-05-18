@@ -8,6 +8,13 @@ import javax.inject.Singleton
 import kotlin.math.abs
 import kotlin.math.sqrt
 
+data class CompositionSuggestion(
+    val direction: Direction,
+    val distanceFromThirds: Float  // 0.0 = on thirds, 1.0 = centered
+) {
+    enum class Direction { LEFT, RIGHT, UP, DOWN, ON_THIRDS }
+}
+
 @Singleton
 class CompositionAnalyzer @Inject constructor() {
 
@@ -200,5 +207,53 @@ class CompositionAnalyzer @Inject constructor() {
         }
 
         return Pair("Move subject slightly $directionText", arrow)
+    }
+
+    /**
+     * Analyzes where the primary subject (face) is relative to rule-of-thirds
+     * intersection points and returns a directional suggestion for the camera
+     * to move. Face rects are expected in normalized [0,1] coordinates,
+     * matching how [analyze] uses them.
+     */
+    fun analyzeSubjectPosition(faceRects: List<RectF>): CompositionSuggestion {
+        if (faceRects.isEmpty()) {
+            return CompositionSuggestion(CompositionSuggestion.Direction.ON_THIRDS, 0f)
+        }
+
+        val primaryFace = faceRects.maxByOrNull { it.width() * it.height() }
+            ?: return CompositionSuggestion(CompositionSuggestion.Direction.ON_THIRDS, 0f)
+
+        val subjectX = (primaryFace.left + primaryFace.right) / 2f
+        val subjectY = (primaryFace.top + primaryFace.bottom) / 2f
+
+        // Nearest thirds intersection: (1/3,1/3), (1/3,2/3), (2/3,1/3), (2/3,2/3)
+        val thirdsPoints = listOf(
+            1f / 3f to 1f / 3f,
+            1f / 3f to 2f / 3f,
+            2f / 3f to 1f / 3f,
+            2f / 3f to 2f / 3f
+        )
+        val nearest = thirdsPoints.minByOrNull { (tx, ty) ->
+            val dx = subjectX - tx
+            val dy = subjectY - ty
+            dx * dx + dy * dy
+        }!!
+
+        val dx = subjectX - nearest.first
+        val dy = subjectY - nearest.second
+        val distance = sqrt(dx * dx + dy * dy)
+
+        if (distance < 0.08f) {
+            return CompositionSuggestion(CompositionSuggestion.Direction.ON_THIRDS, distance)
+        }
+
+        // Direction the CAMERA should move (opposite to where the subject is offset)
+        val direction = if (abs(dx) > abs(dy)) {
+            if (dx > 0) CompositionSuggestion.Direction.LEFT else CompositionSuggestion.Direction.RIGHT
+        } else {
+            if (dy > 0) CompositionSuggestion.Direction.UP else CompositionSuggestion.Direction.DOWN
+        }
+
+        return CompositionSuggestion(direction, distance)
     }
 }
