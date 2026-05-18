@@ -766,18 +766,20 @@ class CaptureManager @Inject constructor(
             val result = original.copy(Bitmap.Config.ARGB_8888, true)
             val canvas = Canvas(result)
 
-            val enhancePaint = Paint().apply {
-                val contrast = ColorMatrix(floatArrayOf(
-                    1.03f, 0f, 0f, 0f, -4f,
-                    0f, 1.03f, 0f, 0f, -4f,
-                    0f, 0f, 1.03f, 0f, -4f,
-                    0f, 0f, 0f, 1f, 0f
-                ))
-                val saturation = ColorMatrix().apply { setSaturation(1.05f) }
-                contrast.postConcat(saturation)
-                colorFilter = ColorMatrixColorFilter(contrast)
+            if (style != PhotoStyle.NATURAL) {
+                val enhancePaint = Paint().apply {
+                    val contrast = ColorMatrix(floatArrayOf(
+                        1.03f, 0f, 0f, 0f, -4f,
+                        0f, 1.03f, 0f, 0f, -4f,
+                        0f, 0f, 1.03f, 0f, -4f,
+                        0f, 0f, 0f, 1f, 0f
+                    ))
+                    val saturation = ColorMatrix().apply { setSaturation(1.05f) }
+                    contrast.postConcat(saturation)
+                    colorFilter = ColorMatrixColorFilter(contrast)
+                }
+                canvas.drawBitmap(result, 0f, 0f, enhancePaint)
             }
-            canvas.drawBitmap(result, 0f, 0f, enhancePaint)
 
             if (isHdr) {
                 try {
@@ -813,6 +815,13 @@ class CaptureManager @Inject constructor(
                 System.gc()
             }
 
+            try {
+                applySharpenLuminance(result, sceneType)
+            } catch (oom: OutOfMemoryError) {
+                Log.w("CaptureManager", "OOM in sharpening, skipping")
+                System.gc()
+            }
+
             ToneCurveEngine.apply(result, style)
 
             if (style != PhotoStyle.NATURAL) {
@@ -835,13 +844,6 @@ class CaptureManager @Inject constructor(
                     Log.w("CaptureManager", "OOM in bokeh, skipping")
                     System.gc()
                 }
-            }
-
-            try {
-                applySharpenLuminance(result, sceneType)
-            } catch (oom: OutOfMemoryError) {
-                Log.w("CaptureManager", "OOM in sharpening, skipping")
-                System.gc()
             }
 
             if (style == PhotoStyle.CINEMATIC || style == PhotoStyle.FILM) {
@@ -1364,6 +1366,97 @@ class CaptureManager @Inject constructor(
             return (-128f * (scale - 1f))
         }
 
+        /**
+         * 5x5 separable Gaussian blur on a float luminance channel.
+         * Kernel: [1, 4, 6, 4, 1] / 16 per axis (sigma ~1.0).
+         */
+        private fun gaussianBlur5x5(input: FloatArray, w: Int, h: Int): FloatArray {
+            val kernel = floatArrayOf(1f / 16f, 4f / 16f, 6f / 16f, 4f / 16f, 1f / 16f)
+            val temp = FloatArray(w * h)
+            // Horizontal pass
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    var sum = 0f
+                    for (k in -2..2) {
+                        val sx = (x + k).coerceIn(0, w - 1)
+                        sum += input[y * w + sx] * kernel[k + 2]
+                    }
+                    temp[y * w + x] = sum
+                }
+            }
+            // Vertical pass
+            val output = FloatArray(w * h)
+            for (x in 0 until w) {
+                for (y in 0 until h) {
+                    var sum = 0f
+                    for (k in -2..2) {
+                        val sy = (y + k).coerceIn(0, h - 1)
+                        sum += temp[sy * w + x] * kernel[k + 2]
+                    }
+                    output[y * w + x] = sum
+                }
+            }
+            return output
+        }
+
+        /**
+         * Downsample by 2x using 2x2 block averaging.
+         * Returns (downsampled array, new width, new height).
+         */
+        private fun downsample2x(input: FloatArray, w: Int, h: Int): Triple<FloatArray, Int, Int> {
+            val nw = w / 2
+            val nh = h / 2
+            val output = FloatArray(nw * nh)
+            for (y in 0 until nh) {
+                for (x in 0 until nw) {
+                    val sx = x * 2
+                    val sy = y * 2
+                    val a = input[sy * w + sx]
+                    val b = if (sx + 1 < w) input[sy * w + sx + 1] else a
+                    val c = if (sy + 1 < h) input[(sy + 1) * w + sx] else a
+                    val d = if (sx + 1 < w && sy + 1 < h) input[(sy + 1) * w + sx + 1] else a
+                    output[y * nw + x] = (a + b + c + d) * 0.25f
+                }
+            }
+            return Triple(output, nw, nh)
+        }
+
+        /**
+         * Bilinear upsample from (inW x inH) to (outW x outH).
+         */
+        private fun upsample2x(input: FloatArray, inW: Int, inH: Int, outW: Int, outH: Int): FloatArray {
+            val output = FloatArray(outW * outH)
+            val xRatio = if (outW > 1) (inW - 1).toFloat() / (outW - 1) else 0f
+            val yRatio = if (outH > 1) (inH - 1).toFloat() / (outH - 1) else 0f
+            for (y in 0 until outH) {
+                val srcY = y * yRatio
+                val y0 = srcY.toInt().coerceIn(0, inH - 1)
+                val y1 = (y0 + 1).coerceIn(0, inH - 1)
+                val fy = srcY - y0
+                for (x in 0 until outW) {
+                    val srcX = x * xRatio
+                    val x0 = srcX.toInt().coerceIn(0, inW - 1)
+                    val x1 = (x0 + 1).coerceIn(0, inW - 1)
+                    val fx = srcX - x0
+                    val topLeft = input[y0 * inW + x0]
+                    val topRight = input[y0 * inW + x1]
+                    val bottomLeft = input[y1 * inW + x0]
+                    val bottomRight = input[y1 * inW + x1]
+                    val top = topLeft + (topRight - topLeft) * fx
+                    val bottom = bottomLeft + (bottomRight - bottomLeft) * fx
+                    output[y * outW + x] = top + (bottom - top) * fy
+                }
+            }
+            return output
+        }
+
+        /**
+         * 3-level Laplacian pyramid sharpening on the luminance channel.
+         *
+         * Pipeline: extract Y → build 3-level Laplacian pyramid →
+         * boost fine (level 0) and mid (level 1) details → reconstruct →
+         * write back Y and convert to RGB.
+         */
         fun applySharpenLuminance(bitmap: android.graphics.Bitmap, sceneType: SceneType) {
             val strength = getSharpnessStrength(sceneType)
             val w = bitmap.width
@@ -1371,7 +1464,8 @@ class CaptureManager @Inject constructor(
             val pixels = IntArray(w * h)
             bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
 
-            val yChannel = IntArray(w * h)
+            // --- Convert to YCbCr, extract channels ---
+            val yChannel = FloatArray(w * h)
             val cbChannel = IntArray(w * h)
             val crChannel = IntArray(w * h)
 
@@ -1380,65 +1474,54 @@ class CaptureManager @Inject constructor(
                 val g = (pixels[i] shr 8) and 0xFF
                 val b = pixels[i] and 0xFF
                 val ycbcr = ColorSpaceUtils.rgbToYCbCr(r, g, b)
-                yChannel[i] = ycbcr[0]
+                yChannel[i] = ycbcr[0].toFloat()
                 cbChannel[i] = ycbcr[1]
                 crChannel[i] = ycbcr[2]
             }
 
-            val blurredY = IntArray(w * h)
-            for (y in 0 until h) {
-                for (x in 0 until w) {
-                    val idx = y * w + x
-                    var sum = 0
-                    var count = 0
-                    for (dy in -1..1) {
-                        for (dx in -1..1) {
-                            val ny = y + dy
-                            val nx = x + dx
-                            if (ny in 0 until h && nx in 0 until w) {
-                                sum += yChannel[ny * w + nx]
-                                count++
-                            }
-                        }
-                    }
-                    blurredY[idx] = sum / count
-                }
+            // --- Build 3-level Laplacian pyramid ---
+            // Level 0: full resolution
+            val blurred0 = gaussianBlur5x5(yChannel, w, h)
+            val detail0 = FloatArray(w * h) { yChannel[it] - blurred0[it] }
+
+            // Downsample blurred0 → level 1 input
+            val (level1Input, w1, h1) = downsample2x(blurred0, w, h)
+
+            // Level 1: half resolution
+            val blurred1 = gaussianBlur5x5(level1Input, w1, h1)
+            val detail1 = FloatArray(w1 * h1) { level1Input[it] - blurred1[it] }
+
+            // Downsample blurred1 → level 2 (residual)
+            val (level2Residual, w2, h2) = downsample2x(blurred1, w1, h1)
+
+            // --- Boost detail levels scaled by scene strength ---
+            // Normalize boosts relative to LANDSCAPE baseline (0.5)
+            val baselineStrength = 0.5f
+            val fineBoost = 0.12f * strength / baselineStrength
+            val midBoost = 0.40f * strength / baselineStrength
+            // Coarse (level 2): no boost
+
+            // Apply boosts in place
+            for (i in detail0.indices) {
+                detail0[i] *= (1f + fineBoost)
+            }
+            for (i in detail1.indices) {
+                detail1[i] *= (1f + midBoost)
             }
 
-            val edgeMask = FloatArray(w * h)
-            var maxEdge = 0f
-            for (y in 1 until h - 1) {
-                for (x in 1 until w - 1) {
-                    val idx = y * w + x
-                    val center = yChannel[idx]
-                    val top = yChannel[(y - 1) * w + x]
-                    val bottom = yChannel[(y + 1) * w + x]
-                    val left = yChannel[y * w + (x - 1)]
-                    val right = yChannel[y * w + (x + 1)]
-                    val laplacian = kotlin.math.abs(4 * center - top - bottom - left - right).toFloat()
-                    edgeMask[idx] = laplacian
-                    if (laplacian > maxEdge) maxEdge = laplacian
-                }
-            }
+            // --- Reconstruct from pyramid ---
+            // Upsample level 2 residual to level 1 size, add boosted detail 1
+            val up2 = upsample2x(level2Residual, w2, h2, w1, h1)
+            val reconstructed1 = FloatArray(w1 * h1) { up2[it] + detail1[it] }
 
-            val edgeThreshold = maxEdge * 0.1f
-            if (maxEdge > 0f) {
-                for (i in edgeMask.indices) {
-                    edgeMask[i] = if (edgeMask[i] < edgeThreshold) 0f
-                    else (edgeMask[i] / maxEdge).coerceIn(0f, 1f)
-                }
-            }
+            // Upsample reconstructed level 1 to level 0 size, add boosted detail 0
+            val up1 = upsample2x(reconstructed1, w1, h1, w, h)
+            val reconstructedY = FloatArray(w * h) { up1[it] + detail0[it] }
 
-            val sharpenedY = IntArray(w * h)
-            for (i in yChannel.indices) {
-                val detail = yChannel[i] - blurredY[i]
-                val edgeWeight = edgeMask[i]
-                val sharpened = yChannel[i] + (strength * detail * edgeWeight).toInt()
-                sharpenedY[i] = sharpened.coerceIn(0, 255)
-            }
-
+            // --- Write back to RGB ---
             for (i in pixels.indices) {
-                val rgb = ColorSpaceUtils.ycbcrToRgb(sharpenedY[i], cbChannel[i], crChannel[i])
+                val yVal = reconstructedY[i].toInt().coerceIn(0, 255)
+                val rgb = ColorSpaceUtils.ycbcrToRgb(yVal, cbChannel[i], crChannel[i])
                 pixels[i] = (0xFF shl 24) or (rgb[0] shl 16) or (rgb[1] shl 8) or rgb[2]
             }
 
