@@ -16,16 +16,15 @@ class ToneCurveEngineTest {
     }
 
     @Test
-    fun `S-curve boosts midtones and compresses extremes`() {
+    fun `S-curve darkens shadows and brightens highlights`() {
         val curve = ToneCurveEngine.sCurve(0.5f)
         assertThat(curve[0]).isEqualTo(0)
         assertThat(curve[255]).isEqualTo(255)
-        // Midpoint is unchanged (128 maps to 128)
-        assertThat(curve[128]).isEqualTo(128)
-        // Shadows lifted above identity
-        assertThat(curve[64]).isGreaterThan(64)
-        // Highlights compressed below identity
-        assertThat(curve[192]).isLessThan(192)
+        assertThat(curve[128]).isWithin(2).of(128)
+        // Shadows pulled down (contrast boost)
+        assertThat(curve[64]).isLessThan(64)
+        // Highlights pushed up (contrast boost)
+        assertThat(curve[192]).isGreaterThan(192)
     }
 
     @Test
@@ -40,12 +39,12 @@ class ToneCurveEngineTest {
     @Test
     fun `VIVID style has S-curve on all channels`() {
         val curves = ToneCurveEngine.getCurvesForStyle(PhotoStyle.VIVID)
-        // S-curve lifts shadows above identity
-        assertThat(curves.r[64]).isGreaterThan(64)
-        assertThat(curves.g[64]).isGreaterThan(64)
-        // S-curve compresses highlights below identity
-        assertThat(curves.r[192]).isLessThan(192)
-        assertThat(curves.g[192]).isLessThan(192)
+        // S-curve darkens shadows
+        assertThat(curves.r[64]).isLessThan(64)
+        assertThat(curves.g[64]).isLessThan(64)
+        // S-curve brightens highlights
+        assertThat(curves.r[192]).isGreaterThan(192)
+        assertThat(curves.g[192]).isGreaterThan(192)
         // Blue channel has extra boost in shadows vs red
         assertThat(curves.b[32]).isAtLeast(curves.r[32])
     }

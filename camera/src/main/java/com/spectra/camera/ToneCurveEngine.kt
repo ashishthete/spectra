@@ -31,9 +31,9 @@ object ToneCurveEngine {
 
     fun sCurve(strength: Float): IntArray {
         return IntArray(256) { i ->
-            val normalized = i / 255.0
-            val t = normalized
-            val sCurved = t + strength * t * (1.0 - t) * (0.5 - t) * 4.0
+            val t = i / 255.0
+            val smoothstep = t * t * (3.0 - 2.0 * t)
+            val sCurved = t + strength * (smoothstep - t)
             (sCurved * 255.0).roundToInt().coerceIn(0, 255)
         }
     }
