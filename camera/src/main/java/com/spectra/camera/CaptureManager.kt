@@ -709,7 +709,7 @@ class CaptureManager @Inject constructor(
         }
     }
 
-    private fun applyPostProcess(uri: Uri, beautyLevel: Int, style: PhotoStyle, isFrontCamera: Boolean = false, isHdr: Boolean = false, faceRects: List<RectF> = emptyList(), isPortraitMode: Boolean = false) {
+    private fun applyPostProcess(uri: Uri, beautyLevel: Int, style: PhotoStyle, isFrontCamera: Boolean = false, isHdr: Boolean = false, faceRects: List<RectF> = emptyList(), isPortraitMode: Boolean = false, sceneType: SceneType = SceneType.UNKNOWN, currentIso: Int = 100) {
         try {
             val exifStream = context.contentResolver.openInputStream(uri) ?: return
             val exif = ExifInterface(exifStream)
@@ -760,29 +760,19 @@ class CaptureManager @Inject constructor(
                 canvas.drawBitmap(result, 0f, 0f, warmPaint)
             }
 
-            if (style != PhotoStyle.NATURAL) {
-                val stylePaint = Paint().apply {
-                    colorFilter = ColorMatrixColorFilter(getStyleMatrix(style))
-                }
-                canvas.drawBitmap(result, 0f, 0f, stylePaint)
-            }
+            NoiseReducer.apply(result, currentIso)
 
-            if (style == PhotoStyle.FILM) {
-                val liftPaint = Paint().apply { color = Color.argb(18, 40, 35, 50) }
-                canvas.drawRect(0f, 0f, result.width.toFloat(), result.height.toFloat(), liftPaint)
-            }
-            if (style == PhotoStyle.CINEMATIC) {
-                val tealPaint = Paint().apply { color = Color.argb(12, 0, 60, 70) }
-                canvas.drawRect(0f, 0f, result.width.toFloat(), result.height.toFloat(), tealPaint)
-            }
+            ToneCurveEngine.apply(result, style)
 
             if (beautyLevel > 0) {
-                applyFaceAwareBeauty(result, canvas, beautyLevel, faceRects)
+                applyLabBeauty(result, canvas, beautyLevel, faceRects)
             }
 
             if (isPortraitMode && faceRects.isNotEmpty()) {
                 applyPortraitBokeh(result, canvas, faceRects)
             }
+
+            applySharpenLuminance(result, sceneType)
 
             if (style == PhotoStyle.CINEMATIC || style == PhotoStyle.FILM) {
                 val cx = result.width / 2f
