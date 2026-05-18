@@ -22,6 +22,7 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import com.spectra.core.model.PhotoStyle
+import com.spectra.core.model.SceneType
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -1161,6 +1162,105 @@ class CaptureManager @Inject constructor(
                 ))
                 sat.postConcat(tealOrange); sat.postConcat(crushBlacks); sat
             }
+        }
+    }
+
+    companion object {
+        fun getSharpnessStrength(sceneType: SceneType): Float {
+            return when (sceneType) {
+                SceneType.PORTRAIT -> 0.2f
+                SceneType.LANDSCAPE -> 0.5f
+                SceneType.MACRO -> 0.6f
+                SceneType.NIGHT -> 0.15f
+                SceneType.ACTION -> 0.4f
+                SceneType.PET -> 0.35f
+                SceneType.FOOD -> 0.45f
+                SceneType.ARCHITECTURE -> 0.5f
+                SceneType.DOCUMENT -> 0.55f
+                SceneType.INDOOR -> 0.35f
+                SceneType.UNKNOWN -> 0.35f
+            }
+        }
+
+        fun applySharpenLuminance(bitmap: android.graphics.Bitmap, sceneType: SceneType) {
+            val strength = getSharpnessStrength(sceneType)
+            val w = bitmap.width
+            val h = bitmap.height
+            val pixels = IntArray(w * h)
+            bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+            val yChannel = IntArray(w * h)
+            val cbChannel = IntArray(w * h)
+            val crChannel = IntArray(w * h)
+
+            for (i in pixels.indices) {
+                val r = (pixels[i] shr 16) and 0xFF
+                val g = (pixels[i] shr 8) and 0xFF
+                val b = pixels[i] and 0xFF
+                val ycbcr = ColorSpaceUtils.rgbToYCbCr(r, g, b)
+                yChannel[i] = ycbcr[0]
+                cbChannel[i] = ycbcr[1]
+                crChannel[i] = ycbcr[2]
+            }
+
+            val blurredY = IntArray(w * h)
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    val idx = y * w + x
+                    var sum = 0
+                    var count = 0
+                    for (dy in -1..1) {
+                        for (dx in -1..1) {
+                            val ny = y + dy
+                            val nx = x + dx
+                            if (ny in 0 until h && nx in 0 until w) {
+                                sum += yChannel[ny * w + nx]
+                                count++
+                            }
+                        }
+                    }
+                    blurredY[idx] = sum / count
+                }
+            }
+
+            val edgeMask = FloatArray(w * h)
+            var maxEdge = 0f
+            for (y in 1 until h - 1) {
+                for (x in 1 until w - 1) {
+                    val idx = y * w + x
+                    val center = yChannel[idx]
+                    val top = yChannel[(y - 1) * w + x]
+                    val bottom = yChannel[(y + 1) * w + x]
+                    val left = yChannel[y * w + (x - 1)]
+                    val right = yChannel[y * w + (x + 1)]
+                    val laplacian = kotlin.math.abs(4 * center - top - bottom - left - right).toFloat()
+                    edgeMask[idx] = laplacian
+                    if (laplacian > maxEdge) maxEdge = laplacian
+                }
+            }
+
+            val edgeThreshold = maxEdge * 0.1f
+            if (maxEdge > 0f) {
+                for (i in edgeMask.indices) {
+                    edgeMask[i] = if (edgeMask[i] < edgeThreshold) 0f
+                    else (edgeMask[i] / maxEdge).coerceIn(0f, 1f)
+                }
+            }
+
+            val sharpenedY = IntArray(w * h)
+            for (i in yChannel.indices) {
+                val detail = yChannel[i] - blurredY[i]
+                val edgeWeight = edgeMask[i]
+                val sharpened = yChannel[i] + (strength * detail * edgeWeight).toInt()
+                sharpenedY[i] = sharpened.coerceIn(0, 255)
+            }
+
+            for (i in pixels.indices) {
+                val rgb = ColorSpaceUtils.ycbcrToRgb(sharpenedY[i], cbChannel[i], crChannel[i])
+                pixels[i] = (0xFF shl 24) or (rgb[0] shl 16) or (rgb[1] shl 8) or rgb[2]
+            }
+
+            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
         }
     }
 }
