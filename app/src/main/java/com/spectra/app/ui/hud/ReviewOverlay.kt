@@ -4,8 +4,10 @@ import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,14 +23,27 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -112,88 +127,95 @@ fun SmartReviewOverlay(
         modifier = modifier
     ) {
         val context = LocalContext.current
+        var dividerFraction by remember { mutableFloatStateOf(0.5f) }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black)
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                ) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(context)
-                            .data(Uri.parse(bestOriginalUri ?: ""))
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = "Best original",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    Text(
-                        text = "RAW · BEST OF 5",
-                        color = HudColors.accent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(12.dp)
-                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(HudColors.accent.copy(alpha = 0.5f))
-                )
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                ) {
-                    if (aiEnhancedUri != null) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(context)
-                                .data(Uri.parse(aiEnhancedUri))
-                                .crossfade(true)
-                                .build(),
-                            contentDescription = "AI enhanced",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color(0xFF111111)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            EnhancingShimmer()
-                        }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures { change, dragAmount ->
+                        change.consume()
+                        dividerFraction = (dividerFraction + dragAmount / size.width).coerceIn(0.05f, 0.95f)
                     }
-                    Text(
-                        text = if (isEnhancing) "PROCESSING..." else "PROCESSED",
-                        color = if (isEnhancing) HudColors.textMuted else HudColors.accent,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.sp,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(12.dp)
-                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                }
+        ) {
+            if (aiEnhancedUri != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(Uri.parse(aiEnhancedUri))
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = "AI enhanced",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(Color(0xFF111111)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    EnhancingShimmer()
                 }
             }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        clip = true
+                        shape = object : Shape {
+                            override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density) =
+                                Outline.Rectangle(Rect(0f, 0f, size.width * dividerFraction, size.height))
+                        }
+                    }
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(Uri.parse(bestOriginalUri ?: ""))
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = "Best original",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val x = size.width * dividerFraction
+                drawLine(HudColors.accent, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
+                drawCircle(HudColors.accent, radius = 12.dp.toPx(), center = Offset(x, size.height / 2))
+                drawCircle(Color.Black, radius = 8.dp.toPx(), center = Offset(x, size.height / 2))
+                drawCircle(HudColors.accent, radius = 4.dp.toPx(), center = Offset(x, size.height / 2))
+            }
+
+            Text(
+                text = "ORIGINAL",
+                color = HudColors.accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.sp,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(12.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+
+            Text(
+                text = if (isEnhancing) "PROCESSING..." else "PROCESSED",
+                color = if (isEnhancing) HudColors.textMuted else HudColors.accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.sp,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
 
             Row(
                 modifier = Modifier
