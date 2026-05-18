@@ -1105,9 +1105,7 @@ class CaptureManager @Inject constructor(
 
         val blurPixels = IntArray(w * h)
         System.arraycopy(sharpPixels, 0, blurPixels, 0, sharpPixels.size)
-        for (pass in 0 until 3) {
-            boxBlurPass(blurPixels, w, h, 7)
-        }
+        gaussianBlurPass(blurPixels, w, h, 15)
 
         val mask = FloatArray(w * h)
         for (faceNorm in faceRects) {
@@ -1172,55 +1170,60 @@ class CaptureManager @Inject constructor(
         Log.d("CaptureManager", "Portrait bokeh applied, ${faceRects.size} face regions, feathered mask")
     }
 
-    private fun boxBlurPass(pixels: IntArray, w: Int, h: Int, radius: Int) {
+    private fun gaussianBlurPass(pixels: IntArray, w: Int, h: Int, radius: Int) {
+        val kernel = generateGaussianKernel(radius)
         val temp = IntArray(pixels.size)
-        val kernelSize = radius * 2 + 1
+
+        // Horizontal pass
         for (y in 0 until h) {
-            var sumR = 0; var sumG = 0; var sumB = 0
-            for (kx in -radius..radius) {
-                val x = kx.coerceIn(0, w - 1)
-                val p = pixels[y * w + x]
-                sumR += (p shr 16) and 0xFF
-                sumG += (p shr 8) and 0xFF
-                sumB += p and 0xFF
-            }
             for (x in 0 until w) {
+                var sumR = 0f; var sumG = 0f; var sumB = 0f
+                for (k in -radius..radius) {
+                    val sx = (x + k).coerceIn(0, w - 1)
+                    val p = pixels[y * w + sx]
+                    val weight = kernel[k + radius]
+                    sumR += ((p shr 16) and 0xFF) * weight
+                    sumG += ((p shr 8) and 0xFF) * weight
+                    sumB += (p and 0xFF) * weight
+                }
                 temp[y * w + x] = (0xFF shl 24) or
-                    ((sumR / kernelSize) shl 16) or
-                    ((sumG / kernelSize) shl 8) or
-                    (sumB / kernelSize)
-                val addX = (x + radius + 1).coerceAtMost(w - 1)
-                val remX = (x - radius).coerceAtLeast(0)
-                val addP = pixels[y * w + addX]
-                val remP = pixels[y * w + remX]
-                sumR += ((addP shr 16) and 0xFF) - ((remP shr 16) and 0xFF)
-                sumG += ((addP shr 8) and 0xFF) - ((remP shr 8) and 0xFF)
-                sumB += (addP and 0xFF) - (remP and 0xFF)
+                    (sumR.toInt().coerceIn(0, 255) shl 16) or
+                    (sumG.toInt().coerceIn(0, 255) shl 8) or
+                    sumB.toInt().coerceIn(0, 255)
             }
         }
+
+        // Vertical pass
         for (x in 0 until w) {
-            var sumR = 0; var sumG = 0; var sumB = 0
-            for (ky in -radius..radius) {
-                val y = ky.coerceIn(0, h - 1)
-                val p = temp[y * w + x]
-                sumR += (p shr 16) and 0xFF
-                sumG += (p shr 8) and 0xFF
-                sumB += p and 0xFF
-            }
             for (y in 0 until h) {
+                var sumR = 0f; var sumG = 0f; var sumB = 0f
+                for (k in -radius..radius) {
+                    val sy = (y + k).coerceIn(0, h - 1)
+                    val p = temp[sy * w + x]
+                    val weight = kernel[k + radius]
+                    sumR += ((p shr 16) and 0xFF) * weight
+                    sumG += ((p shr 8) and 0xFF) * weight
+                    sumB += (p and 0xFF) * weight
+                }
                 pixels[y * w + x] = (0xFF shl 24) or
-                    ((sumR / kernelSize) shl 16) or
-                    ((sumG / kernelSize) shl 8) or
-                    (sumB / kernelSize)
-                val addY = (y + radius + 1).coerceAtMost(h - 1)
-                val remY = (y - radius).coerceAtLeast(0)
-                val addP = temp[addY * w + x]
-                val remP = temp[remY * w + x]
-                sumR += ((addP shr 16) and 0xFF) - ((remP shr 16) and 0xFF)
-                sumG += ((addP shr 8) and 0xFF) - ((remP shr 8) and 0xFF)
-                sumB += (addP and 0xFF) - (remP and 0xFF)
+                    (sumR.toInt().coerceIn(0, 255) shl 16) or
+                    (sumG.toInt().coerceIn(0, 255) shl 8) or
+                    sumB.toInt().coerceIn(0, 255)
             }
         }
+    }
+
+    private fun generateGaussianKernel(radius: Int): FloatArray {
+        val sigma = radius / 2.5f
+        val kernel = FloatArray(radius * 2 + 1)
+        var sum = 0f
+        for (i in kernel.indices) {
+            val x = (i - radius).toFloat()
+            kernel[i] = kotlin.math.exp(-(x * x) / (2f * sigma * sigma))
+            sum += kernel[i]
+        }
+        for (i in kernel.indices) kernel[i] /= sum
+        return kernel
     }
 
     private fun decimalToDms(decimal: Double): String {
