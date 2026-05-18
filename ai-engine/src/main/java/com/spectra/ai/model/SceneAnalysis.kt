@@ -1,5 +1,6 @@
 package com.spectra.ai.model
 
+import com.spectra.ai.MotionDetector
 import com.spectra.core.model.SceneType
 
 data class SceneAnalysis(
@@ -7,6 +8,7 @@ data class SceneAnalysis(
     val confidence: Float = 0f,
     val lighting: LightingCondition = LightingCondition.UNKNOWN,
     val motionLevel: MotionLevel = MotionLevel.STATIC,
+    val motionType: MotionDetector.MotionType = MotionDetector.MotionType.STATIC,
     val distanceRange: DistanceRange = DistanceRange.INFINITY,
     val faceData: FaceData = FaceData.EMPTY,
     val timestampMs: Long = System.currentTimeMillis()
