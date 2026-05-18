@@ -96,7 +96,10 @@ data class HudState(
     val focusPeakingData: IntArray? = null,
     val zebraData: IntArray? = null,
     val analysisWidth: Int = 0,
-    val analysisHeight: Int = 0
+    val analysisHeight: Int = 0,
+
+    val captureExplanation: CaptureExplanation? = null,
+    val showAiExplainer: Boolean = false,
 ) {
     val isLowLight: Boolean get() = actualIso > 800 || actualShutterSpeedNs > 33_000_000L
 }
