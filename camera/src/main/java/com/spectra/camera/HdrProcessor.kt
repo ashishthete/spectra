@@ -12,8 +12,8 @@ class HdrProcessor {
 
     companion object {
         fun computeBracketExposures(baseExposureNs: Long, baseIso: Int): List<Pair<Long, Int>> {
-            val underExposure = baseExposureNs / 4
-            val overExposure = baseExposureNs * 4
+            val underExposure = (baseExposureNs / 2.83f).toLong()  // -1.5EV (÷√8)
+            val overExposure = (baseExposureNs * 2.83f).toLong()   // +1.5EV (×√8)
             return listOf(
                 Pair(underExposure, baseIso),
                 Pair(baseExposureNs, baseIso),
@@ -61,8 +61,8 @@ class HdrProcessor {
             } else {
                 baseExposureNs
             }
-            val underExposure = biasedBase / 4
-            val overExposure = biasedBase * 4
+            val underExposure = (biasedBase / 2.83f).toLong()  // -1.5EV (÷√8)
+            val overExposure = (biasedBase * 2.83f).toLong()   // +1.5EV (×√8)
             return listOf(
                 Pair(underExposure, baseIso),
                 Pair(biasedBase, baseIso),
@@ -74,6 +74,81 @@ class HdrProcessor {
             if (sceneContrast < 0.15f) return 0f
             val normalized = ((sceneContrast - 0.15f) / 0.85f).coerceIn(0f, 1f)
             return -(normalized * 1.0f).coerceIn(0f, 1.0f)
+        }
+
+        fun laplacianContrastWeight(luminance: FloatArray, w: Int, h: Int, x: Int, y: Int): Float {
+            if (x < 1 || x >= w - 1 || y < 1 || y >= h - 1) return 0f
+            val idx = y * w + x
+            val center = luminance[idx]
+            val top = luminance[(y - 1) * w + x]
+            val bottom = luminance[(y + 1) * w + x]
+            val left = luminance[y * w + (x - 1)]
+            val right = luminance[y * w + (x + 1)]
+            return abs(center * 4f - top - bottom - left - right)
+        }
+
+        fun detectGhostRegions(frames: List<IntArray>, w: Int, h: Int): BooleanArray {
+            val n = w * h
+            val ghostMask = BooleanArray(n)
+            if (frames.size < 2) return ghostMask
+
+            // Compute luminance arrays for each frame
+            val luminances = frames.map { pixels ->
+                FloatArray(n) { i ->
+                    val r = ((pixels[i] shr 16) and 0xFF) / 255f
+                    val g = ((pixels[i] shr 8) and 0xFF) / 255f
+                    val b = (pixels[i] and 0xFF) / 255f
+                    0.299f * r + 0.587f * g + 0.114f * b
+                }
+            }
+
+            // Compute Median Threshold Bitmaps for each frame
+            val mtbs = luminances.map { lum ->
+                // Find median luminance
+                val sorted = lum.copyOf()
+                sorted.sort()
+                val median = sorted[sorted.size / 2]
+                // MTB: pixel > median → true
+                BooleanArray(n) { i -> lum[i] > median }
+            }
+
+            // Use first frame as reference
+            val refMtb = mtbs[0]
+
+            // XOR each frame's MTB with reference, accumulate ghost regions
+            for (f in 1 until mtbs.size) {
+                val frameMtb = mtbs[f]
+                for (i in 0 until n) {
+                    if (refMtb[i] != frameMtb[i]) {
+                        ghostMask[i] = true
+                    }
+                }
+            }
+
+            // Apply 5x5 dilation to expand ghost regions
+            val dilated = BooleanArray(n)
+            for (y in 0 until h) {
+                for (x in 0 until w) {
+                    if (dilated[y * w + x]) continue
+                    var found = false
+                    for (dy in -2..2) {
+                        if (found) break
+                        for (dx in -2..2) {
+                            val nx = x + dx
+                            val ny = y + dy
+                            if (nx in 0 until w && ny in 0 until h && ghostMask[ny * w + nx]) {
+                                found = true
+                                break
+                            }
+                        }
+                    }
+                    if (found) {
+                        dilated[y * w + x] = true
+                    }
+                }
+            }
+
+            return dilated
         }
 
         fun computeShadowBoostStrength(sceneContrast: Float): Float {
@@ -90,6 +165,11 @@ class HdrProcessor {
 
         val n = width * height
         val weightMaps = Array(numFrames) { FloatArray(n) }
+
+        // Detect ghost regions across frames
+        val ghostMask = detectGhostRegions(frames, width, height)
+        // Reference frame index (base exposure, typically the middle frame)
+        val refFrame = if (numFrames >= 3) 1 else 0
 
         for (f in 0 until numFrames) {
             val pixels = frames[f]
@@ -111,10 +191,11 @@ class HdrProcessor {
                     val contrast = if (x in 1 until width - 1 && y in 1 until height - 1) {
                         contrastWeight(luminance, width, height, x, y)
                     } else 0f
+                    val laplacian = laplacianContrastWeight(luminance, width, height, x, y)
                     val saturation = saturationWeight(r, g, b)
                     val exposure = wellExposednessWeight(luminance[i])
 
-                    weightMaps[f][i] = (contrast + 0.001f) * (saturation + 0.001f) * (exposure + 0.001f)
+                    weightMaps[f][i] = (contrast + laplacian + 0.001f) * (saturation + 0.001f) * (exposure + 0.001f)
                 }
             }
         }
@@ -131,18 +212,23 @@ class HdrProcessor {
 
         val result = IntArray(n)
         for (i in 0 until n) {
-            var rSum = 0f; var gSum = 0f; var bSum = 0f
-            for (f in 0 until numFrames) {
-                val w = weightMaps[f][i]
-                val pixel = frames[f][i]
-                rSum += w * ((pixel shr 16) and 0xFF)
-                gSum += w * ((pixel shr 8) and 0xFF)
-                bSum += w * (pixel and 0xFF)
+            if (ghostMask[i]) {
+                // For ghosted pixels, use ONLY the reference (base) frame
+                result[i] = frames[refFrame][i]
+            } else {
+                var rSum = 0f; var gSum = 0f; var bSum = 0f
+                for (f in 0 until numFrames) {
+                    val w = weightMaps[f][i]
+                    val pixel = frames[f][i]
+                    rSum += w * ((pixel shr 16) and 0xFF)
+                    gSum += w * ((pixel shr 8) and 0xFF)
+                    bSum += w * (pixel and 0xFF)
+                }
+                val rOut = rSum.toInt().coerceIn(0, 255)
+                val gOut = gSum.toInt().coerceIn(0, 255)
+                val bOut = bSum.toInt().coerceIn(0, 255)
+                result[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
             }
-            val rOut = rSum.toInt().coerceIn(0, 255)
-            val gOut = gSum.toInt().coerceIn(0, 255)
-            val bOut = bSum.toInt().coerceIn(0, 255)
-            result[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
         }
 
         return result
