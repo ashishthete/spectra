@@ -1,0 +1,159 @@
+#version 310 es
+
+// ============================================================================
+// Mertens exposure-fusion — 3 bracketed HDR frames → 1 blended output.
+//
+// Matches HdrProcessor.mertensFusion() with the same three quality metrics:
+//
+//   Exposure weight   = exp(-12.5 · (L - 0.5)²)          [wellExposednessWeight]
+//   Saturation weight = std_dev(R, G, B)                   [saturationWeight]
+//   Contrast weight   = mean absolute Laplacian            [laplacianContrastWeight]
+//                     + local mean-absolute-difference     [contrastWeight]
+//
+//   combined = (contrast + laplacian + ε) × (saturation + ε) × (exposure + ε)
+//
+// After per-frame weight maps are built they are normalised per-pixel so they
+// sum to 1.0, then used to blend the three RGB frames.
+//
+// Buffer layout (all pixels linearised row-major):
+//   binding 0 — frame 0 RGB  (3 floats per pixel, [0,255] scale, RGBRGB…)
+//   binding 1 — frame 1 RGB
+//   binding 2 — frame 2 RGB
+//   binding 3 — output  RGB  (3 floats per pixel)
+//
+// Uniforms:
+//   uWidth, uHeight — image dimensions
+//   uNumFrames      — always 3, but kept as uniform for clarity
+// ============================================================================
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std430, binding = 0) readonly  buffer Frame0  { float frame0[]; };
+layout(std430, binding = 1) readonly  buffer Frame1  { float frame1[]; };
+layout(std430, binding = 2) readonly  buffer Frame2  { float frame2[]; };
+layout(std430, binding = 3) writeonly buffer Output  { float outData[]; };
+
+uniform int uWidth;
+uniform int uHeight;
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+const float EPS          = 0.001;   // weight floor (avoids 0/0 during normalisation)
+const float INV255       = 1.0 / 255.0;
+const int   NUM_FRAMES   = 3;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// Retrieve normalised [0,1] RGB for frame f at pixel (x,y).
+// Frame buffers store values in [0,255] with stride 3 (RGBRGB…).
+vec3 getPixel(int f, int x, int y) {
+    int base = (y * uWidth + x) * 3;
+    vec3 raw;
+    if (f == 0) raw = vec3(frame0[base], frame0[base + 1], frame0[base + 2]);
+    else if (f == 1) raw = vec3(frame1[base], frame1[base + 1], frame1[base + 2]);
+    else             raw = vec3(frame2[base], frame2[base + 1], frame2[base + 2]);
+    return raw * INV255;
+}
+
+// Luminance (BT.601) of an [0,1] RGB triple.
+float luminance(vec3 c) {
+    return 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+}
+
+// Mertens well-exposedness weight: Gaussian centred at 0.5.
+float exposureWeight(float L) {
+    float d = L - 0.5;
+    return exp(-12.5 * d * d);
+}
+
+// Saturation weight: standard deviation of R, G, B channels.
+float saturationWeight(vec3 c) {
+    float mean = (c.r + c.g + c.b) / 3.0;
+    float var3 = ((c.r - mean) * (c.r - mean) +
+                  (c.g - mean) * (c.g - mean) +
+                  (c.b - mean) * (c.b - mean)) / 3.0;
+    return sqrt(var3);
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+void main() {
+    int x = int(gl_GlobalInvocationID.x);
+    int y = int(gl_GlobalInvocationID.y);
+
+    if (x >= uWidth || y >= uHeight) return;
+
+    // ── Step 1: compute luminance planes for the 3×3 neighbourhood ──────────
+    // We need them to evaluate contrast and Laplacian weights.
+    // To avoid redundant texture fetches we precompute a small 3×3 lum patch
+    // for each frame around (x, y).
+
+    float lum[3];   // centre luminance per frame
+
+    // Per-frame weight accumulation
+    float weights[3];
+
+    for (int f = 0; f < NUM_FRAMES; ++f) {
+        vec3 centre = getPixel(f, x, y);
+        lum[f] = luminance(centre);
+
+        // ── Exposure ─────────────────────────────────────────────────────────
+        float wExp = exposureWeight(lum[f]);
+
+        // ── Saturation ───────────────────────────────────────────────────────
+        float wSat = saturationWeight(centre);
+
+        // ── Contrast — mean absolute difference with 8-neighbours ────────────
+        float contrastAcc = 0.0;
+        int   contrastCnt = 0;
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                if (dx == 0 && dy == 0) continue;
+                int nx2 = x + dx;
+                int ny2 = y + dy;
+                if (nx2 >= 0 && nx2 < uWidth && ny2 >= 0 && ny2 < uHeight) {
+                    float nL = luminance(getPixel(f, nx2, ny2));
+                    contrastAcc += abs(nL - lum[f]);
+                    ++contrastCnt;
+                }
+            }
+        }
+        float wContrast = (contrastCnt > 0) ? (contrastAcc / float(contrastCnt)) : 0.0;
+
+        // ── Laplacian contrast (5-point stencil) ─────────────────────────────
+        float wLaplacian = 0.0;
+        if (x >= 1 && x < uWidth - 1 && y >= 1 && y < uHeight - 1) {
+            float top    = luminance(getPixel(f, x,     y - 1));
+            float bottom = luminance(getPixel(f, x,     y + 1));
+            float left2  = luminance(getPixel(f, x - 1, y    ));
+            float right2 = luminance(getPixel(f, x + 1, y    ));
+            wLaplacian = abs(lum[f] * 4.0 - top - bottom - left2 - right2);
+        }
+
+        // ── Combined weight (matches HdrProcessor formula) ───────────────────
+        weights[f] = (wContrast + wLaplacian + EPS) * (wSat + EPS) * (wExp + EPS);
+    }
+
+    // ── Step 2: normalise weights ────────────────────────────────────────────
+    float totalW = weights[0] + weights[1] + weights[2];
+    if (totalW > 0.0) {
+        weights[0] /= totalW;
+        weights[1] /= totalW;
+        weights[2] /= totalW;
+    } else {
+        // Degenerate: equal blend
+        weights[0] = weights[1] = weights[2] = 1.0 / float(NUM_FRAMES);
+    }
+
+    // ── Step 3: weighted blend of RGB ────────────────────────────────────────
+    vec3 result = vec3(0.0);
+    for (int f = 0; f < NUM_FRAMES; ++f) {
+        result += weights[f] * getPixel(f, x, y);
+    }
+
+    // Convert back to [0, 255] and write.
+    vec3 out255 = clamp(result * 255.0, 0.0, 255.0);
+    int outBase = (y * uWidth + x) * 3;
+    outData[outBase    ] = out255.r;
+    outData[outBase + 1] = out255.g;
+    outData[outBase + 2] = out255.b;
+}

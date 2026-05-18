@@ -5,6 +5,11 @@ import com.spectra.ai.model.LightingCondition
 import javax.inject.Inject
 import javax.inject.Singleton
 
+data class LightDirection(
+    val angleDegrees: Float,
+    val strength: Float
+)
+
 data class MixedLightingResult(
     val isMixed: Boolean = false,
     val ctVariance: Float = 0f,
@@ -301,6 +306,70 @@ class LightingAnalyzer @Inject constructor() {
             }
         }
         return kelvinValues.last()
+    }
+
+    fun computeLightDirection(pixels: IntArray, width: Int, height: Int): LightDirection {
+        if (pixels.isEmpty() || width == 0 || height == 0) return LightDirection(0f, 0f)
+
+        val gridSize = 4
+        val cellW = width / gridSize
+        val cellH = height / gridSize
+        if (cellW == 0 || cellH == 0) return LightDirection(0f, 0f)
+
+        val zoneBrightness = Array(gridSize) { FloatArray(gridSize) }
+        for (gy in 0 until gridSize) {
+            for (gx in 0 until gridSize) {
+                val startX = gx * cellW
+                val startY = gy * cellH
+                val endX = minOf(startX + cellW, width)
+                val endY = minOf(startY + cellH, height)
+                var total = 0.0
+                var count = 0
+                val step = maxOf(1, (endX - startX) * (endY - startY) / 400)
+                var idx = 0
+                for (y in startY until endY) {
+                    for (x in startX until endX) {
+                        idx++
+                        if (idx % step != 0) continue
+                        val pixel = pixels[y * width + x]
+                        val r = (pixel shr 16) and 0xFF
+                        val g = (pixel shr 8) and 0xFF
+                        val b = pixel and 0xFF
+                        total += 0.299 * r + 0.587 * g + 0.114 * b
+                        count++
+                    }
+                }
+                zoneBrightness[gy][gx] = if (count > 0) (total / count).toFloat() else 0f
+            }
+        }
+
+        var gx = 0f
+        var gy = 0f
+        for (row in 0 until gridSize) {
+            for (col in 0 until gridSize - 1) {
+                gx += zoneBrightness[row][col + 1] - zoneBrightness[row][col]
+            }
+        }
+        for (col in 0 until gridSize) {
+            for (row in 0 until gridSize - 1) {
+                gy += zoneBrightness[row][col] - zoneBrightness[row + 1][col]
+            }
+        }
+        gx /= (gridSize * (gridSize - 1)).toFloat()
+        gy /= (gridSize * (gridSize - 1)).toFloat()
+
+        val magnitude = kotlin.math.sqrt((gx * gx + gy * gy).toDouble()).toFloat()
+        val maxPossibleGradient = 255f
+        val strength = (magnitude / maxPossibleGradient).coerceIn(0f, 1f)
+
+        val angleDegrees = if (magnitude > 0f) {
+            val rawAngle = Math.toDegrees(kotlin.math.atan2(gy.toDouble(), gx.toDouble())).toFloat()
+            (rawAngle + 360f) % 360f
+        } else {
+            0f
+        }
+
+        return LightDirection(angleDegrees, strength)
     }
 
     fun estimateColorTemperature(pixels: IntArray): Int {

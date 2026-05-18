@@ -1,0 +1,74 @@
+#version 310 es
+
+// ============================================================================
+// Bilateral filter — single-channel (luminance) data.
+//
+// Matches the CPU implementation in NoiseReducer.bilateralFilter():
+//   - Spatial weight  = exp(-(dx²+dy²) / (2·σ_spatial²))
+//     where σ_spatial = uRadius / 2.0
+//   - Range  weight  = exp(-(Δv²)      / (2·σ_range²))
+//   - Final pixel    = Σ(w·v) / Σ(w)
+//
+// Input/output values are in [0, 255] (stored as float for SSBO convenience).
+// ============================================================================
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// binding 0 — read-only input plane (linearised row-major)
+layout(std430, binding = 0) readonly  buffer Input  { float inData[];  };
+// binding 1 — write-only output plane
+layout(std430, binding = 1) writeonly buffer Output { float outData[]; };
+
+// Image dimensions and filter parameters
+uniform int   uWidth;
+uniform int   uHeight;
+uniform int   uRadius;       // spatial radius in pixels (e.g. 3 for a 7×7 kernel)
+uniform float uRangeSigma;   // range sigma in pixel-value units (0–255 scale)
+
+void main() {
+    int x = int(gl_GlobalInvocationID.x);
+    int y = int(gl_GlobalInvocationID.y);
+
+    // Bounds check — extra threads launched to fill full 16×16 tiles may
+    // fall outside the image.
+    if (x >= uWidth || y >= uHeight) {
+        return;
+    }
+
+    int   idx       = y * uWidth + x;
+    float centerVal = inData[idx];
+
+    // Pre-compute denominators (2σ²) once per invocation.
+    float spatialSigma    = float(uRadius) * 0.5;          // σ_spatial = radius / 2
+    float spatialSigmaSq2 = 2.0 * spatialSigma * spatialSigma;
+    float rangeSigmaSq2   = 2.0 * uRangeSigma  * uRangeSigma;
+
+    float weightSum = 0.0;
+    float valueSum  = 0.0;
+
+    for (int ny = max(0, y - uRadius); ny <= min(uHeight - 1, y + uRadius); ++ny) {
+        for (int nx = max(0, x - uRadius); nx <= min(uWidth  - 1, x + uRadius); ++nx) {
+            float nVal = inData[ny * uWidth + nx];
+
+            // Spatial (Gaussian distance) weight
+            float dx = float(nx - x);
+            float dy = float(ny - y);
+            float spatialWeight = exp(-(dx * dx + dy * dy) / spatialSigmaSq2);
+
+            // Range (intensity similarity) weight
+            float rangeDiff   = nVal - centerVal;
+            float rangeWeight = exp(-(rangeDiff * rangeDiff) / rangeSigmaSq2);
+
+            float w  = spatialWeight * rangeWeight;
+            weightSum += w;
+            valueSum  += nVal * w;
+        }
+    }
+
+    // Guard against degenerate case (weightSum should always be > 0 because
+    // the centre pixel always contributes 1.0, but be safe).
+    float result = (weightSum > 0.0) ? (valueSum / weightSum) : centerVal;
+
+    // Clamp to [0, 255] and write.
+    outData[idx] = clamp(result, 0.0, 255.0);
+}

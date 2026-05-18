@@ -1037,6 +1037,17 @@ class CaptureManager @Inject constructor(
             original.recycle()
             val canvas = Canvas(result)
 
+            val pipelineStart = System.nanoTime()
+            var cumulativeMs = 0L
+            var nrMs = 0L
+            var sharpMs = 0L
+            var toneMs = 0L
+            var shadowMs = 0L
+            var beautyMs = 0L
+            var highlightMs = 0L
+            var bokehMs = 0L
+            var vignetteMs = 0L
+
             if (style != PhotoStyle.NATURAL) {
                 val enhancePaint = Paint().apply {
                     val contrast = ColorMatrix(floatArrayOf(
@@ -1062,11 +1073,6 @@ class CaptureManager @Inject constructor(
                 }
             }
 
-            if (sceneContrast > 0.15f) {
-                val shadowStrength = HdrProcessor.computeShadowBoostStrength(sceneContrast)
-                applyShadowRecovery(result, shadowStrength)
-            }
-
             if (isFrontCamera) {
                 val warmPaint = Paint().apply {
                     colorFilter = ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
@@ -1079,6 +1085,8 @@ class CaptureManager @Inject constructor(
                 canvas.drawBitmap(result, 0f, 0f, warmPaint)
             }
 
+            // Stage: Noise reduction (never skip)
+            val nrStart = System.nanoTime()
             if (currentIso >= 400) {
                 try {
                     NoiseReducer.apply(result, currentIso)
@@ -1087,7 +1095,11 @@ class CaptureManager @Inject constructor(
                     System.gc()
                 }
             }
+            nrMs = (System.nanoTime() - nrStart) / 1_000_000
+            cumulativeMs += nrMs
 
+            // Stage: Sharpening / Laplacian pyramid (never skip)
+            val sharpStart = System.nanoTime()
             if (style != PhotoStyle.NATURAL) {
                 try {
                     applySharpenLuminance(result, sceneType)
@@ -1096,42 +1108,92 @@ class CaptureManager @Inject constructor(
                     System.gc()
                 }
             }
+            sharpMs = (System.nanoTime() - sharpStart) / 1_000_000
+            cumulativeMs += sharpMs
 
+            // Stage: Tone curve / 3D LUT (never skip)
+            val toneStart = System.nanoTime()
             ToneCurveEngine.apply(result, style)
+            toneMs = (System.nanoTime() - toneStart) / 1_000_000
+            cumulativeMs += toneMs
 
-            if (style != PhotoStyle.NATURAL) {
-                applyHighlightRolloffToBitmap(result, style)
+            // Stage: Shadow recovery
+            val shadowStart = System.nanoTime()
+            if (sceneContrast > 0.15f) {
+                val shadowStrength = HdrProcessor.computeShadowBoostStrength(sceneContrast)
+                applyShadowRecovery(result, shadowStrength)
             }
+            shadowMs = (System.nanoTime() - shadowStart) / 1_000_000
+            cumulativeMs += shadowMs
 
-            if (beautyLevel > 0) {
-                try {
-                    applyLabBeauty(result, canvas, beautyLevel, faceRects)
-                } catch (oom: OutOfMemoryError) {
-                    Log.w("CaptureManager", "OOM in beauty processing, skipping")
-                    System.gc()
+            // Stage: Beauty
+            if (cumulativeMs > PROCESSING_BUDGET_MS) {
+                Log.w("Pipeline", "Budget exceeded after shadow recovery (${cumulativeMs}ms), skipping beauty, highlight rolloff, bokeh, vignette")
+            } else {
+                val beautyStart = System.nanoTime()
+                if (beautyLevel > 0) {
+                    try {
+                        applyLabBeauty(result, canvas, beautyLevel, faceRects)
+                    } catch (oom: OutOfMemoryError) {
+                        Log.w("CaptureManager", "OOM in beauty processing, skipping")
+                        System.gc()
+                    }
+                }
+                beautyMs = (System.nanoTime() - beautyStart) / 1_000_000
+                cumulativeMs += beautyMs
+
+                // Stage: Highlight rolloff
+                if (cumulativeMs > PROCESSING_BUDGET_MS) {
+                    Log.w("Pipeline", "Budget exceeded after beauty (${cumulativeMs}ms), skipping highlight rolloff, bokeh, vignette")
+                } else {
+                    val highlightStart = System.nanoTime()
+                    if (style != PhotoStyle.NATURAL) {
+                        applyHighlightRolloffToBitmap(result, style)
+                    }
+                    highlightMs = (System.nanoTime() - highlightStart) / 1_000_000
+                    cumulativeMs += highlightMs
+
+                    // Stage: Bokeh
+                    if (cumulativeMs > PROCESSING_BUDGET_MS) {
+                        Log.w("Pipeline", "Budget exceeded after highlight rolloff (${cumulativeMs}ms), skipping bokeh, vignette")
+                    } else {
+                        val bokehStart = System.nanoTime()
+                        if (isPortraitMode && faceRects.isNotEmpty()) {
+                            try {
+                                applyPortraitBokeh(result, canvas, faceRects)
+                            } catch (oom: OutOfMemoryError) {
+                                Log.w("CaptureManager", "OOM in bokeh, skipping")
+                                System.gc()
+                            }
+                        }
+                        bokehMs = (System.nanoTime() - bokehStart) / 1_000_000
+                        cumulativeMs += bokehMs
+
+                        // Stage: Vignette (lowest priority, skip first)
+                        if (cumulativeMs > PROCESSING_BUDGET_MS) {
+                            Log.w("Pipeline", "Budget exceeded after bokeh (${cumulativeMs}ms), skipping vignette")
+                        } else {
+                            val vignetteStart = System.nanoTime()
+                            if (style == PhotoStyle.CINEMATIC || style == PhotoStyle.FILM) {
+                                val cx = result.width / 2f
+                                val cy = result.height / 2f
+                                val radius = maxOf(cx, cy)
+                                val vignettePaint = Paint().apply {
+                                    shader = RadialGradient(cx, cy, radius,
+                                        intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT, Color.argb(50, 0, 0, 0)),
+                                        floatArrayOf(0f, 0.65f, 1f), Shader.TileMode.CLAMP)
+                                }
+                                canvas.drawRect(0f, 0f, result.width.toFloat(), result.height.toFloat(), vignettePaint)
+                            }
+                            vignetteMs = (System.nanoTime() - vignetteStart) / 1_000_000
+                            cumulativeMs += vignetteMs
+                        }
+                    }
                 }
             }
 
-            if (isPortraitMode && faceRects.isNotEmpty()) {
-                try {
-                    applyPortraitBokeh(result, canvas, faceRects)
-                } catch (oom: OutOfMemoryError) {
-                    Log.w("CaptureManager", "OOM in bokeh, skipping")
-                    System.gc()
-                }
-            }
-
-            if (style == PhotoStyle.CINEMATIC || style == PhotoStyle.FILM) {
-                val cx = result.width / 2f
-                val cy = result.height / 2f
-                val radius = maxOf(cx, cy)
-                val vignettePaint = Paint().apply {
-                    shader = RadialGradient(cx, cy, radius,
-                        intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT, Color.argb(50, 0, 0, 0)),
-                        floatArrayOf(0f, 0.65f, 1f), Shader.TileMode.CLAMP)
-                }
-                canvas.drawRect(0f, 0f, result.width.toFloat(), result.height.toFloat(), vignettePaint)
-            }
+            val totalMs = (System.nanoTime() - pipelineStart) / 1_000_000
+            Log.d("Pipeline", "NR: ${nrMs}ms, Sharp: ${sharpMs}ms, Tone: ${toneMs}ms, Shadow: ${shadowMs}ms, Beauty: ${beautyMs}ms, Highlight: ${highlightMs}ms, Bokeh: ${bokehMs}ms, Vignette: ${vignetteMs}ms | Total: ${totalMs}ms")
 
             val outputStream = context.contentResolver.openOutputStream(uri, "w") ?: return
             result.compress(Bitmap.CompressFormat.JPEG, 98, outputStream)
@@ -1608,6 +1670,8 @@ class CaptureManager @Inject constructor(
     }
 
     companion object {
+        private const val PROCESSING_BUDGET_MS = 2000L
+
         fun getSharpnessStrength(sceneType: SceneType): Float {
             return when (sceneType) {
                 SceneType.PORTRAIT -> 0.2f
