@@ -315,7 +315,6 @@ class CaptureManager @Inject constructor(
         result.setPixels(outPixels, 0, w, 0, 0, w, h)
 
         applyLocalToneMap(result, 0.5f)
-        applySharpen(result)
         applyEnhanceColors(result)
 
         val stream = java.io.ByteArrayOutputStream()
@@ -698,8 +697,6 @@ class CaptureManager @Inject constructor(
         val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         result.setPixels(merged, 0, w, 0, 0, w, h)
 
-        applySharpen(result)
-
         val stream = java.io.ByteArrayOutputStream()
         result.compress(Bitmap.CompressFormat.JPEG, 95, stream)
         val jpegBytes = stream.toByteArray()
@@ -783,8 +780,13 @@ class CaptureManager @Inject constructor(
             canvas.drawBitmap(result, 0f, 0f, enhancePaint)
 
             if (isHdr) {
-                applyLocalToneMap(result, 0.5f)
-                Log.d("CaptureManager", "Local tone mapping (bilateral decomposition) applied")
+                try {
+                    applyLocalToneMap(result, 0.5f)
+                    Log.d("CaptureManager", "Local tone mapping (bilateral decomposition) applied")
+                } catch (oom: OutOfMemoryError) {
+                    Log.w("CaptureManager", "OOM in local tone map, skipping")
+                    System.gc()
+                }
             }
 
             if (sceneContrast > 0.15f) {
@@ -804,7 +806,12 @@ class CaptureManager @Inject constructor(
                 canvas.drawBitmap(result, 0f, 0f, warmPaint)
             }
 
-            NoiseReducer.apply(result, currentIso)
+            try {
+                NoiseReducer.apply(result, currentIso)
+            } catch (oom: OutOfMemoryError) {
+                Log.w("CaptureManager", "OOM in noise reducer, skipping")
+                System.gc()
+            }
 
             ToneCurveEngine.apply(result, style)
 
@@ -813,14 +820,29 @@ class CaptureManager @Inject constructor(
             }
 
             if (beautyLevel > 0) {
-                applyLabBeauty(result, canvas, beautyLevel, faceRects)
+                try {
+                    applyLabBeauty(result, canvas, beautyLevel, faceRects)
+                } catch (oom: OutOfMemoryError) {
+                    Log.w("CaptureManager", "OOM in beauty processing, skipping")
+                    System.gc()
+                }
             }
 
             if (isPortraitMode && faceRects.isNotEmpty()) {
-                applyPortraitBokeh(result, canvas, faceRects)
+                try {
+                    applyPortraitBokeh(result, canvas, faceRects)
+                } catch (oom: OutOfMemoryError) {
+                    Log.w("CaptureManager", "OOM in bokeh, skipping")
+                    System.gc()
+                }
             }
 
-            applySharpenLuminance(result, sceneType)
+            try {
+                applySharpenLuminance(result, sceneType)
+            } catch (oom: OutOfMemoryError) {
+                Log.w("CaptureManager", "OOM in sharpening, skipping")
+                System.gc()
+            }
 
             if (style == PhotoStyle.CINEMATIC || style == PhotoStyle.FILM) {
                 val cx = result.width / 2f
@@ -851,6 +873,9 @@ class CaptureManager @Inject constructor(
             original.recycle()
             result.recycle()
             Log.d("CaptureManager", "Post-process applied: style=$style, beauty=$beautyLevel, front=$isFrontCamera")
+        } catch (oom: OutOfMemoryError) {
+            Log.e("CaptureManager", "OOM during post-processing, saving unprocessed", oom)
+            System.gc()
         } catch (e: Exception) {
             Log.e("CaptureManager", "Post-process failed", e)
         }
@@ -914,24 +939,34 @@ class CaptureManager @Inject constructor(
     private fun applyLocalToneMap(bitmap: android.graphics.Bitmap, compressionFactor: Float) {
         val w = bitmap.width
         val h = bitmap.height
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
 
-        val luminance = FloatArray(w * h)
-        val logLum = FloatArray(w * h)
-        for (i in pixels.indices) {
-            val r = ((pixels[i] shr 16) and 0xFF) / 255f
-            val g = ((pixels[i] shr 8) and 0xFF) / 255f
-            val b = (pixels[i] and 0xFF) / 255f
+        val maxDim = 960
+        val needsDownsample = w > maxDim || h > maxDim
+        val scaleFactor = if (needsDownsample) maxDim.toFloat() / maxOf(w, h) else 1f
+        val sw = if (needsDownsample) (w * scaleFactor).toInt().coerceAtLeast(1) else w
+        val sh = if (needsDownsample) (h * scaleFactor).toInt().coerceAtLeast(1) else h
+
+        val smallBitmap = if (needsDownsample) {
+            Bitmap.createScaledBitmap(bitmap, sw, sh, true)
+        } else null
+        val smallPixels = IntArray(sw * sh)
+        (smallBitmap ?: bitmap).getPixels(smallPixels, 0, sw, 0, 0, sw, sh)
+
+        val luminance = FloatArray(sw * sh)
+        val logLum = FloatArray(sw * sh)
+        for (i in smallPixels.indices) {
+            val r = ((smallPixels[i] shr 16) and 0xFF) / 255f
+            val g = ((smallPixels[i] shr 8) and 0xFF) / 255f
+            val b = (smallPixels[i] and 0xFF) / 255f
             luminance[i] = (0.299f * r + 0.587f * g + 0.114f * b).coerceAtLeast(0.001f)
             logLum[i] = kotlin.math.ln(luminance[i])
         }
 
-        val base = FloatArray(w * h)
+        val base = FloatArray(sw * sh)
         System.arraycopy(logLum, 0, base, 0, logLum.size)
-        bilateralApprox(base, logLum, w, h, spatialRadius = 5, rangeSigma = 0.4f)
+        bilateralApprox(base, logLum, sw, sh, spatialRadius = 5, rangeSigma = 0.4f)
 
-        val detail = FloatArray(w * h)
+        val detail = FloatArray(sw * sh)
         for (i in detail.indices) {
             detail[i] = logLum[i] - base[i]
         }
@@ -941,22 +976,41 @@ class CaptureManager @Inject constructor(
             base[i] = baseMean + (base[i] - baseMean) * compressionFactor
         }
 
-        for (i in pixels.indices) {
+        val scaleMap = FloatArray(sw * sh)
+        for (i in smallPixels.indices) {
             val newLum = kotlin.math.exp(base[i] + detail[i]).coerceIn(0.001f, 10f)
-            val scale = if (luminance[i] > 0.001f) (newLum / luminance[i]).coerceIn(0.2f, 5f) else 1f
-
-            val r = ((pixels[i] shr 16) and 0xFF)
-            val g = ((pixels[i] shr 8) and 0xFF)
-            val b = (pixels[i] and 0xFF)
-
-            val rOut = (r * scale).toInt().coerceIn(0, 255)
-            val gOut = (g * scale).toInt().coerceIn(0, 255)
-            val bOut = (b * scale).toInt().coerceIn(0, 255)
-
-            pixels[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
+            scaleMap[i] = if (luminance[i] > 0.001f) (newLum / luminance[i]).coerceIn(0.2f, 5f) else 1f
         }
 
-        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+        smallBitmap?.recycle()
+
+        val fullPixels = IntArray(w * h)
+        bitmap.getPixels(fullPixels, 0, w, 0, 0, w, h)
+
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val i = y * w + x
+                val scale = if (needsDownsample) {
+                    val sx = (x * scaleFactor).toInt().coerceIn(0, sw - 1)
+                    val sy = (y * scaleFactor).toInt().coerceIn(0, sh - 1)
+                    scaleMap[sy * sw + sx]
+                } else {
+                    scaleMap[i]
+                }
+
+                val r = ((fullPixels[i] shr 16) and 0xFF)
+                val g = ((fullPixels[i] shr 8) and 0xFF)
+                val b = (fullPixels[i] and 0xFF)
+
+                val rOut = (r * scale).toInt().coerceIn(0, 255)
+                val gOut = (g * scale).toInt().coerceIn(0, 255)
+                val bOut = (b * scale).toInt().coerceIn(0, 255)
+
+                fullPixels[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
+            }
+        }
+
+        bitmap.setPixels(fullPixels, 0, w, 0, 0, w, h)
     }
 
     fun analyzeSceneContrast(jpegBytes: ByteArray): Float {
