@@ -5,7 +5,8 @@ data class CameraSettings(
     val shutterSpeedDenominator: Int = 125,
     val whiteBalanceKelvin: Int = 5500,
     val exposureCompensation: Float = 0f,
-    val focusDistance: Float = 0f
+    val focusDistance: Float = 0f,
+    val captureRaw: Boolean = false
 ) {
     val formattedShutterSpeed: String
         get() = if (shutterSpeedDenominator <= 1) "1s"

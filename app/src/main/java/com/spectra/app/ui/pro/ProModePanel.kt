@@ -119,6 +119,7 @@ fun ProModePanel(
     isManualOverride: Boolean,
     focusPeakingEnabled: Boolean = false,
     zebraEnabled: Boolean = false,
+    rawEnabled: Boolean = false,
     gridLabel: String = "3×3",
     onIsoChange: (Int) -> Unit,
     onShutterChange: (Int) -> Unit,
@@ -129,6 +130,7 @@ fun ProModePanel(
     zebraThreshold: Int = 235,
     onToggleFocusPeaking: () -> Unit = {},
     onToggleZebra: () -> Unit = {},
+    onToggleRaw: () -> Unit = {},
     onCycleZebraThreshold: () -> Unit = {},
     onCycleGrid: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -324,6 +326,7 @@ fun ProModePanel(
                     .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
+                ProToggle("RAW", rawEnabled, onToggleRaw)
                 ProToggle("PEAK", focusPeakingEnabled, onToggleFocusPeaking)
                 ProToggle("ZEBRA", zebraEnabled, onToggleZebra)
                 if (zebraEnabled) {

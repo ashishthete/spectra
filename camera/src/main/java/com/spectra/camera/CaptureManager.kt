@@ -611,6 +611,45 @@ class CaptureManager @Inject constructor(
         }
     }
 
+    suspend fun saveRawCopy(jpegBytes: ByteArray, rotationDegrees: Int): String {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+            .format(System.currentTimeMillis())
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "SPECTRA_RAW_$timestamp")
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/Spectra/RAW")
+        }
+        return withContext(Dispatchers.IO) {
+            val uri = context.contentResolver.insert(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues
+            ) ?: return@withContext ""
+
+            context.contentResolver.openOutputStream(uri)?.use { it.write(jpegBytes) }
+
+            try {
+                context.contentResolver.openFileDescriptor(uri, "rw")?.use { fd ->
+                    val exif = ExifInterface(fd.fileDescriptor)
+                    val exifOrientation = when (rotationDegrees) {
+                        90 -> ExifInterface.ORIENTATION_ROTATE_90
+                        180 -> ExifInterface.ORIENTATION_ROTATE_180
+                        270 -> ExifInterface.ORIENTATION_ROTATE_270
+                        else -> ExifInterface.ORIENTATION_NORMAL
+                    }
+                    if (exifOrientation != ExifInterface.ORIENTATION_NORMAL) {
+                        exif.setAttribute(ExifInterface.TAG_ORIENTATION, exifOrientation.toString())
+                    }
+                    exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, "SPECTRA RAW - unprocessed")
+                    exif.saveAttributes()
+                }
+            } catch (e: Exception) {
+                Log.w("CaptureManager", "RAW EXIF write failed", e)
+            }
+
+            Log.d("CaptureManager", "RAW copy saved: $uri")
+            uri.toString()
+        }
+    }
+
     suspend fun captureHdrBracket(
         imageCapture: ImageCapture,
         baseExposureNs: Long,

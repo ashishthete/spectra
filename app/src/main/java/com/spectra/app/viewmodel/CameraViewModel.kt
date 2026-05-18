@@ -758,6 +758,13 @@ class CameraViewModel @Inject constructor(
                 processing = state.processing
             )
 
+            if (state.settings.captureRaw && result.allFrames.isNotEmpty()) {
+                viewModelScope.launch {
+                    val best = result.allFrames.maxBy { (jpeg, _) -> jpeg.size }
+                    captureManager.saveRawCopy(best.first, best.second)
+                }
+            }
+
             _hudState.update { it.copy(
                 lastCapturedUri = result.bestOriginalUri,
                 showCaptureFlash = false,
@@ -771,9 +778,9 @@ class CameraViewModel @Inject constructor(
             )}
 
             viewModelScope.launch {
-                delay(1000)  // Wait 1s after capture before showing
+                delay(1000)
                 _hudState.update { it.copy(showAiExplainer = true) }
-                delay(5000)  // Extended from 3s to 5s
+                delay(5000)
                 _hudState.update { it.copy(showAiExplainer = false) }
             }
 
@@ -922,6 +929,12 @@ class CameraViewModel @Inject constructor(
 
     fun toggleZebra() {
         _hudState.update { it.copy(zebraEnabled = !it.zebraEnabled) }
+    }
+
+    fun toggleRaw() {
+        _hudState.update { it.copy(
+            settings = it.settings.copy(captureRaw = !it.settings.captureRaw)
+        )}
     }
 
     fun cycleGridMode() {

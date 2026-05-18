@@ -264,6 +264,7 @@ fun ViewfinderScreen(
             isManualOverride = hudState.isManualOverride,
             focusPeakingEnabled = hudState.focusPeakingEnabled,
             zebraEnabled = hudState.zebraEnabled,
+            rawEnabled = hudState.settings.captureRaw,
             zebraThreshold = hudState.zebraThreshold,
             gridLabel = hudState.gridMode.label,
             onIsoChange = { viewModel.updateProSetting(iso = it) },
@@ -274,6 +275,7 @@ fun ViewfinderScreen(
             onSnapToAi = { viewModel.snapToAiRecommendation() },
             onToggleFocusPeaking = { viewModel.toggleFocusPeaking() },
             onToggleZebra = { viewModel.toggleZebra() },
+            onToggleRaw = { viewModel.toggleRaw() },
             onCycleZebraThreshold = { viewModel.cycleZebraThreshold() },
             onCycleGrid = { viewModel.cycleGridMode() },
             modifier = Modifier
