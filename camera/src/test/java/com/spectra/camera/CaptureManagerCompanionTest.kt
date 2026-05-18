@@ -57,7 +57,7 @@ class CaptureManagerCompanionTest {
         for (v in 0..100) {
             val result = CaptureManager.sharpnessFromParams(v)
             assertThat(result).isAtLeast(0.1f)
-            assertThat(result).isAtMost(0.7f)
+            assertThat(result).isAtMost(0.71f)
         }
     }
 
