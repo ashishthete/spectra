@@ -138,16 +138,18 @@ object ToneCurveEngine {
         }
     }
 
+    fun hableFilmic(x: Float): Float {
+        val A = 0.15f; val B = 0.50f; val C = 0.10f
+        val D = 0.20f; val E = 0.02f; val F = 0.30f
+        return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F
+    }
+
     fun highlightShoulder(input: Int, shoulderStart: Int, maxOutput: Int, strength: Float): Int {
         if (strength <= 0f || input <= shoulderStart) return input
-        // t: normalized position within [shoulderStart, 255]
         val range = (255 - shoulderStart).coerceAtLeast(1)
         val t = (input - shoulderStart).toFloat() / range
-        // Bezier shoulder: convex curve (t²) compresses highlights — maps [shoulderStart,255]
-        // to [shoulderStart,maxOutput] with the curve easing in quickly and rolling off at top
-        val tEased = t * t
+        val tEased = Math.pow(t.toDouble(), 1.5).toFloat()
         val shoulderOutput = shoulderStart + (maxOutput - shoulderStart) * tEased
-        // Blend between linear (identity) and full shoulder compression
         val result = input + strength * (shoulderOutput - input)
         return result.toInt().coerceIn(shoulderStart, maxOutput)
     }
