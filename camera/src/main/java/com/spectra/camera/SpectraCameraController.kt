@@ -360,6 +360,12 @@ class SpectraCameraController @Inject constructor(
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    fun applyFaceMetering(faceRects: List<android.graphics.RectF>) {
+        val cam = camera ?: return
+        settingsApplier.applyFaceMetering(cam, faceRects)
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
     fun resetToAuto() {
         val cam = camera ?: return
         settingsApplier.applyAuto(cam)

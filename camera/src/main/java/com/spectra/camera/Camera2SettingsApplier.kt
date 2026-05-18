@@ -1,6 +1,9 @@
 package com.spectra.camera
 
+import android.graphics.Rect
+import android.graphics.RectF
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.params.MeteringRectangle
 import android.hardware.camera2.params.RggbChannelVector
 import android.util.Range
 import android.util.Log
@@ -223,6 +226,26 @@ class Camera2SettingsApplier @Inject constructor() {
 
         camera2Control.captureRequestOptions = builder.build()
         Log.d("SettingsApplier", "SemiAuto: ISO=$clampedIso, exposure=${clampedExposureNs}ns, WB=${settings.whiteBalanceKelvin}K")
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    fun applyFaceMetering(camera: Camera, faceRects: List<RectF>, sensorArrayWidth: Int = 4000, sensorArrayHeight: Int = 3000) {
+        if (faceRects.isEmpty()) return
+        val camera2Control = Camera2CameraControl.from(camera.cameraControl)
+
+        val meteringRegions = faceRects.take(3).map { face ->
+            val left = (face.left * sensorArrayWidth).toInt().coerceIn(0, sensorArrayWidth - 1)
+            val top = (face.top * sensorArrayHeight).toInt().coerceIn(0, sensorArrayHeight - 1)
+            val right = (face.right * sensorArrayWidth).toInt().coerceIn(left + 1, sensorArrayWidth)
+            val bottom = (face.bottom * sensorArrayHeight).toInt().coerceIn(top + 1, sensorArrayHeight)
+            MeteringRectangle(Rect(left, top, right, bottom), MeteringRectangle.METERING_WEIGHT_MAX)
+        }.toTypedArray()
+
+        val options = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_REGIONS, meteringRegions)
+            .build()
+        camera2Control.addCaptureRequestOptions(options)
+        Log.d("SettingsApplier", "Face metering: ${meteringRegions.size} regions")
     }
 
     private fun clampIso(iso: Int, min: Int, max: Int): Int = iso.coerceIn(min, max)
