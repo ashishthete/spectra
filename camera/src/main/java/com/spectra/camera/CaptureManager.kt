@@ -45,6 +45,21 @@ class CaptureManager @Inject constructor(
 ) {
     private val executor = Executors.newSingleThreadExecutor()
     private val hdrProcessor = HdrProcessor()
+    private var depthEstimator: DepthEstimator? = null
+    private val depthBokeh = DepthBokeh()
+
+    fun initDepthModel() {
+        val estimator = DepthEstimator(context)
+        if (estimator.initialize()) {
+            depthEstimator = estimator
+            Log.d("CaptureManager", "Depth model loaded")
+        }
+    }
+
+    fun releaseDepthModel() {
+        depthEstimator?.release()
+        depthEstimator = null
+    }
 
     suspend fun capturePhoto(
         imageCapture: ImageCapture,
@@ -914,6 +929,64 @@ class CaptureManager @Inject constructor(
     }
 
     private fun applyPortraitBokeh(bitmap: Bitmap, canvas: Canvas, faceRects: List<RectF>) {
+        val estimator = depthEstimator
+        if (estimator != null && estimator.isAvailable()) {
+            applyDepthMapBokeh(bitmap, canvas, estimator, faceRects)
+        } else {
+            applyFallbackEllipseBokeh(bitmap, canvas, faceRects)
+        }
+    }
+
+    private fun applyDepthMapBokeh(bitmap: Bitmap, canvas: Canvas, estimator: DepthEstimator, faceRects: List<RectF>) {
+        val w = bitmap.width
+        val h = bitmap.height
+        val depthInputSize = estimator.getInputSize()
+
+        val depthMap = estimator.estimateDepth(bitmap)
+        if (depthMap == null) {
+            applyFallbackEllipseBokeh(bitmap, canvas, faceRects)
+            return
+        }
+
+        val focusDepth = if (faceRects.isNotEmpty()) {
+            val face = faceRects[0]
+            val cx = ((face.left + face.right) / 2f * depthInputSize).toInt().coerceIn(0, depthInputSize - 1)
+            val cy = ((face.top + face.bottom) / 2f * depthInputSize).toInt().coerceIn(0, depthInputSize - 1)
+            depthMap[cy * depthInputSize + cx]
+        } else {
+            depthMap[depthInputSize / 2 * depthInputSize + depthInputSize / 2]
+        }
+
+        val lumGuide = FloatArray(depthInputSize * depthInputSize)
+        val smallBmp = Bitmap.createScaledBitmap(bitmap, depthInputSize, depthInputSize, true)
+        val smallPixels = IntArray(depthInputSize * depthInputSize)
+        smallBmp.getPixels(smallPixels, 0, depthInputSize, 0, 0, depthInputSize, depthInputSize)
+        smallBmp.recycle()
+        for (i in smallPixels.indices) {
+            val r = (smallPixels[i] shr 16) and 0xFF
+            val g = (smallPixels[i] shr 8) and 0xFF
+            val b = smallPixels[i] and 0xFF
+            lumGuide[i] = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+        }
+
+        val refinedDepth = depthBokeh.guidedFilter(lumGuide, depthMap, depthInputSize, depthInputSize, radius = 4, eps = 0.01f)
+
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        val result = depthBokeh.applyDepthBokeh(
+            pixels, refinedDepth, w, h,
+            depthInputSize, depthInputSize,
+            focusDepth = focusDepth,
+            maxBlurRadius = 15f
+        )
+
+        bitmap.setPixels(result, 0, w, 0, 0, w, h)
+        canvas.drawBitmap(bitmap, 0f, 0f, Paint())
+        Log.d("CaptureManager", "Depth-map bokeh applied, focus=${"%.2f".format(focusDepth)}")
+    }
+
+    private fun applyFallbackEllipseBokeh(bitmap: Bitmap, canvas: Canvas, faceRects: List<RectF>) {
         val w = bitmap.width
         val h = bitmap.height
 
