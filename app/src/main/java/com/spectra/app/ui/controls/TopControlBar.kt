@@ -76,7 +76,7 @@ private fun TopButton(
 ) {
     Box(
         modifier = Modifier
-            .size(40.dp)
+            .size(48.dp)
             .clip(CircleShape)
             .background(
                 if (isActive) HudColors.accent.copy(alpha = 0.15f)
@@ -88,7 +88,7 @@ private fun TopButton(
         Text(
             text = icon,
             color = if (isActive) HudColors.accent else HudColors.textSecondary,
-            fontSize = 13.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             fontFamily = FontFamily.SansSerif,
             textAlign = TextAlign.Center

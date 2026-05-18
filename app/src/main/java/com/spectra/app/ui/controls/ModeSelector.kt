@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -62,6 +63,7 @@ fun ModeSelector(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
+                    .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
                     .clickable { onModeSelected(mode) }
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
