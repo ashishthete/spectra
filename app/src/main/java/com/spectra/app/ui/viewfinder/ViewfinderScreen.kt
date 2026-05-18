@@ -380,7 +380,7 @@ fun ViewfinderScreen(
 
         AiExplainerOverlay(
             explanation = hudState.captureExplanation,
-            isVisible = hudState.showAiExplainer && !hudState.showSmartReview,
+            isVisible = hudState.activeOverlay == com.spectra.core.model.OverlayPriority.AI_EXPLAINER,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 120.dp)

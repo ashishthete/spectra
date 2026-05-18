@@ -103,4 +103,13 @@ data class HudState(
     val showAiExplainer: Boolean = false,
 ) {
     val isLowLight: Boolean get() = actualIso > 800 || actualShutterSpeedNs > 33_000_000L
+
+    val activeOverlay: OverlayPriority? get() = when {
+        showCaptureFlash -> OverlayPriority.CAPTURE_FLASH
+        showReview || showSmartReview -> OverlayPriority.REVIEW
+        coachingText != null -> OverlayPriority.COACHING
+        showAiExplainer -> OverlayPriority.AI_EXPLAINER
+        beautyLevel > 0 -> OverlayPriority.BEAUTY
+        else -> null
+    }
 }

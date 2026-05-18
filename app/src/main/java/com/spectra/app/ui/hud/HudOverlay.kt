@@ -182,7 +182,7 @@ fun HudOverlay(
                 val cloudCoaching = state.cloudCoachingText
                 val coaching = cloudCoaching ?: state.coachingText
                 val arrowStr = if (cloudCoaching != null) state.cloudCoachingArrow else state.coachingArrow
-                if (coaching != null) {
+                if (coaching != null && state.activeOverlay == com.spectra.core.model.OverlayPriority.COACHING) {
                     val arrow = try {
                         ArrowDirection.valueOf(arrowStr)
                     } catch (_: Exception) {
