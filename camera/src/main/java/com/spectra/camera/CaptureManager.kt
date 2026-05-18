@@ -137,7 +137,8 @@ class CaptureManager @Inject constructor(
         isHdr: Boolean = false,
         faceRects: List<RectF> = emptyList(),
         isPortraitMode: Boolean = false,
-        processing: ProcessingParams = ProcessingParams()
+        processing: ProcessingParams = ProcessingParams(),
+        sceneContrast: Float = 0f
     ): String {
         return withContext(Dispatchers.IO) {
             val sourceUri = Uri.parse(rawUri)
@@ -160,7 +161,7 @@ class CaptureManager @Inject constructor(
 
             val copyUri = saveJpegToMediaStore(rawBytes, rotation)
             if (copyUri.isNotEmpty()) {
-                applyPostProcess(Uri.parse(copyUri), beautyLevel, style, isFrontCamera, isHdr, faceRects, isPortraitMode, processing = processing)
+                applyPostProcess(Uri.parse(copyUri), beautyLevel, style, isFrontCamera, isHdr, faceRects, isPortraitMode, processing = processing, sceneContrast = sceneContrast)
             }
             Log.d("CaptureManager", "Processed copy saved: $copyUri")
             copyUri
@@ -609,9 +610,14 @@ class CaptureManager @Inject constructor(
         style: PhotoStyle = PhotoStyle.NATURAL,
         isFrontCamera: Boolean = false,
         faceRects: List<android.graphics.RectF> = emptyList(),
-        isPortraitMode: Boolean = false
+        isPortraitMode: Boolean = false,
+        evBias: Float = 0f
     ): String {
-        val brackets = HdrProcessor.computeBracketExposures(baseExposureNs, baseIso)
+        val brackets = if (evBias != 0f) {
+            HdrProcessor.computeBracketExposuresForHighlights(baseExposureNs, baseIso, evBias)
+        } else {
+            HdrProcessor.computeBracketExposures(baseExposureNs, baseIso)
+        }
         val frames = mutableListOf<Pair<ByteArray, Int>>()
 
         try {
@@ -712,7 +718,37 @@ class CaptureManager @Inject constructor(
         }
     }
 
-    private fun applyPostProcess(uri: Uri, beautyLevel: Int, style: PhotoStyle, isFrontCamera: Boolean = false, isHdr: Boolean = false, faceRects: List<RectF> = emptyList(), isPortraitMode: Boolean = false, sceneType: SceneType = SceneType.UNKNOWN, currentIso: Int = 100, processing: ProcessingParams = ProcessingParams()) {
+    private fun applyShadowRecovery(bitmap: Bitmap, strength: Float) {
+        if (strength <= 0f) return
+
+        val w = bitmap.width
+        val h = bitmap.height
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        for (i in pixels.indices) {
+            val pixel = pixels[i]
+            val r = ((pixel shr 16) and 0xFF) / 255f
+            val g = ((pixel shr 8) and 0xFF) / 255f
+            val b = (pixel and 0xFF) / 255f
+
+            val lum = 0.299f * r + 0.587f * g + 0.114f * b
+
+            if (lum < 0.4f) {
+                val shadowFactor = 1f - (lum / 0.4f)
+                val boost = 1f + strength * shadowFactor * 0.6f
+                val rOut = (r * boost * 255f).toInt().coerceIn(0, 255)
+                val gOut = (g * boost * 255f).toInt().coerceIn(0, 255)
+                val bOut = (b * boost * 255f).toInt().coerceIn(0, 255)
+                pixels[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
+            }
+        }
+
+        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+        Log.d("CaptureManager", "Shadow recovery applied: strength=${"%.2f".format(strength)}")
+    }
+
+    private fun applyPostProcess(uri: Uri, beautyLevel: Int, style: PhotoStyle, isFrontCamera: Boolean = false, isHdr: Boolean = false, faceRects: List<RectF> = emptyList(), isPortraitMode: Boolean = false, sceneType: SceneType = SceneType.UNKNOWN, currentIso: Int = 100, processing: ProcessingParams = ProcessingParams(), sceneContrast: Float = 0f) {
         try {
             val exifStream = context.contentResolver.openInputStream(uri) ?: return
             val exif = ExifInterface(exifStream)
@@ -749,6 +785,11 @@ class CaptureManager @Inject constructor(
             if (isHdr) {
                 applyLocalToneMap(result, 0.5f)
                 Log.d("CaptureManager", "Local tone mapping (bilateral decomposition) applied")
+            }
+
+            if (sceneContrast > 0.15f) {
+                val shadowStrength = HdrProcessor.computeShadowBoostStrength(sceneContrast)
+                applyShadowRecovery(result, shadowStrength)
             }
 
             if (isFrontCamera) {

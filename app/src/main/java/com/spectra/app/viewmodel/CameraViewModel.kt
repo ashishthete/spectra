@@ -706,6 +706,7 @@ class CameraViewModel @Inject constructor(
             val state = _hudState.value
             val isHdr = state.isHdrActive && !state.isFrontCamera
             if (isHdr && state.actualShutterSpeedNs > 0 && state.actualIso > 0) {
+                val evBias = com.spectra.camera.HdrProcessor.computeHighlightEvBias(state.sceneContrast)
                 val hdrUri = captureManager.captureHdrBracket(
                     imageCapture,
                     baseExposureNs = state.actualShutterSpeedNs,
@@ -720,7 +721,8 @@ class CameraViewModel @Inject constructor(
                     style = state.photoStyle,
                     isFrontCamera = state.isFrontCamera,
                     faceRects = lastDetectedFaceRects,
-                    isPortraitMode = state.mode == CameraMode.PORT
+                    isPortraitMode = state.mode == CameraMode.PORT,
+                    evBias = evBias
                 )
                 _hudState.update { it.copy(
                     lastCapturedUri = hdrUri,
@@ -771,7 +773,8 @@ class CameraViewModel @Inject constructor(
                         state.isHdrActive,
                         lastDetectedFaceRects,
                         isPortraitMode = state.mode == CameraMode.PORT,
-                        processing = state.processing
+                        processing = state.processing,
+                        sceneContrast = state.sceneContrast
                     )
                     _hudState.update { it.copy(
                         aiEnhancedUri = processedUri,
