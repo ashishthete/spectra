@@ -25,6 +25,9 @@ class SceneClassifier @Inject constructor(
     private val labelMap = mutableListOf<SceneType>()
     private var useGpu = false
 
+    // Temporal scene smoothing (hysteresis) to prevent HUD flicker
+    private val hysteresis = SceneHysteresis()
+
     fun initialize() {
         loadLabels()
         try {
@@ -50,12 +53,32 @@ class SceneClassifier @Inject constructor(
     }
 
     fun classify(bitmap: Bitmap, isFrontCamera: Boolean = false, faceData: FaceData = FaceData.EMPTY): Pair<SceneType, Float> {
-        if (isFrontCamera) {
-            return Pair(SceneType.PORTRAIT, 0.70f)
-        }
-
         val (baseScene, baseConf) = classifyBase(bitmap, faceData)
-        return applyFaceBoost(baseScene, baseConf, faceData)
+        val (boostedScene, boostedConf) = applyFaceBoost(baseScene, baseConf, faceData)
+        // Apply front camera bias BEFORE hysteresis so smoothing works on biased scene
+        val (biasedScene, biasedConf) = if (isFrontCamera) {
+            applyFrontCameraBias(boostedScene, boostedConf, faceData.faceCount)
+        } else {
+            Pair(boostedScene, boostedConf)
+        }
+        return Pair(applyHysteresis(biasedScene), biasedConf)
+    }
+
+    /**
+     * Front camera bias: remap non-face scene types to PORTRAIT.
+     * NIGHT is preserved (low-light selfies are a real use case).
+     * LANDSCAPE, MACRO, DOCUMENT are never valid for front camera.
+     * UNKNOWN is upgraded to PORTRAIT when faces are detected.
+     */
+    private fun applyFrontCameraBias(scene: SceneType, confidence: Float, faceCount: Int): Pair<SceneType, Float> {
+        return when (scene) {
+            SceneType.LANDSCAPE, SceneType.MACRO, SceneType.DOCUMENT ->
+                Pair(SceneType.PORTRAIT, maxOf(confidence, 0.70f))
+            SceneType.UNKNOWN ->
+                if (faceCount > 0) Pair(SceneType.PORTRAIT, maxOf(confidence, 0.70f))
+                else Pair(scene, confidence)
+            else -> Pair(scene, confidence)
+        }
     }
 
     private fun classifyBase(bitmap: Bitmap, faceData: FaceData = FaceData.EMPTY): Pair<SceneType, Float> {
@@ -262,6 +285,22 @@ class SceneClassifier @Inject constructor(
         val inputStream = FileInputStream(assetFd.fileDescriptor)
         val channel = inputStream.channel
         return channel.map(FileChannel.MapMode.READ_ONLY, assetFd.startOffset, assetFd.declaredLength)
+    }
+
+    internal fun applyHysteresis(rawScene: SceneType): SceneType {
+        recentScenes.addLast(rawScene)
+        if (recentScenes.size > 5) recentScenes.removeFirst()
+
+        // Count occurrences of each scene in the buffer
+        val counts = recentScenes.groupingBy { it }.eachCount()
+        val majority = counts.maxByOrNull { it.value }
+
+        // Require at least 3 of 5 to switch
+        if (majority != null && majority.value >= 3 && majority.key != stableScene) {
+            stableScene = majority.key
+        }
+
+        return stableScene
     }
 
     fun release() {
