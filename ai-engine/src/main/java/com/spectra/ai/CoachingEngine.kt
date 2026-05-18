@@ -133,11 +133,21 @@ class CoachingEngine @Inject constructor() {
     private fun subjectMotionHint(analysis: SceneAnalysis, preset: CameraPreset): CoachingHint {
         return when (preset) {
             CameraPreset.ACTION ->
-                CoachingHint("Subject in motion — burst mode will capture the peak", ArrowDirection.NONE, priority = 7)
+                CoachingHint(
+                    "Subject in motion — burst mode will capture the peak",
+                    ArrowDirection.NONE,
+                    priority = 7,
+                    action = CoachingAction.EnableBurst
+                )
             CameraPreset.PORTRAIT ->
                 CoachingHint("Subject moving — ask them to hold still", ArrowDirection.NONE, priority = 7)
             else ->
-                CoachingHint("Movement detected — hold shutter for burst", ArrowDirection.NONE, priority = 7)
+                CoachingHint(
+                    "Subject moving — switch to Action for burst",
+                    ArrowDirection.NONE,
+                    priority = 7,
+                    action = CoachingAction.SwitchPreset(CameraPreset.ACTION)
+                )
         }
     }
 
@@ -186,6 +196,22 @@ class CoachingEngine @Inject constructor() {
                     ArrowDirection.STEADY,
                     priority = 5,
                     action = CoachingAction.SwitchPreset(CameraPreset.NIGHT)
+                )
+            analysis.distanceRange == DistanceRange.MACRO || analysis.distanceRange == DistanceRange.NEAR ->
+                autoMacroHint(analysis)
+            analysis.sceneType == SceneType.LANDSCAPE ->
+                CoachingHint(
+                    "Landscape detected — try Landscape mode",
+                    ArrowDirection.NONE,
+                    priority = 4,
+                    action = CoachingAction.SwitchPreset(CameraPreset.LANDSCAPE)
+                )
+            analysis.faceData.hasFaces ->
+                CoachingHint(
+                    "People detected — try Portrait mode",
+                    ArrowDirection.NONE,
+                    priority = 4,
+                    action = CoachingAction.SwitchPreset(CameraPreset.PORTRAIT)
                 )
             else -> null
         }
@@ -242,12 +268,27 @@ class CoachingEngine @Inject constructor() {
             LightingCondition.GOLDEN_HOUR ->
                 CoachingHint("Golden hour — include foreground interest", ArrowDirection.DOWN, priority = 5)
             LightingCondition.BLUE_HOUR ->
-                CoachingHint("Blue hour — include the sky gradient", ArrowDirection.UP, priority = 5)
+                CoachingHint(
+                    "Blue hour — try ultrawide to capture the full sky",
+                    ArrowDirection.UP,
+                    priority = 5,
+                    action = CoachingAction.SwitchLens(LensId.ULTRAWIDE)
+                )
             LightingCondition.HARSH_MIDDAY ->
                 CoachingHint("Midday sun — look for shade or reflections", ArrowDirection.NONE, priority = 4)
             LightingCondition.OVERCAST ->
-                CoachingHint("Overcast light — great for waterfalls and forests", ArrowDirection.NONE, priority = 3)
-            else -> CoachingHint("Level the horizon — find a strong foreground", ArrowDirection.STEADY, priority = 3)
+                CoachingHint(
+                    "Overcast — ultrawide shows more sky and foreground",
+                    ArrowDirection.NONE,
+                    priority = 3,
+                    action = CoachingAction.SwitchLens(LensId.ULTRAWIDE)
+                )
+            else -> CoachingHint(
+                "Try ultrawide for a dramatic landscape perspective",
+                ArrowDirection.NONE,
+                priority = 3,
+                action = CoachingAction.SwitchLens(LensId.ULTRAWIDE)
+            )
         }
     }
 
@@ -266,8 +307,18 @@ class CoachingEngine @Inject constructor() {
             analysis.lighting == LightingCondition.LOW_LIGHT ->
                 CoachingHint("Low light — action may blur, find brighter area", ArrowDirection.NONE, priority = 7)
             analysis.distanceRange == DistanceRange.FAR || analysis.distanceRange == DistanceRange.INFINITY ->
-                CoachingHint("Pre-focus where the action will happen", ArrowDirection.NONE, priority = 5)
-            else -> CoachingHint("Hold shutter for burst — pick the best frame", ArrowDirection.NONE, priority = 4)
+                CoachingHint(
+                    "Subject far — switch to 3x telephoto for more reach",
+                    ArrowDirection.NONE,
+                    priority = 5,
+                    action = CoachingAction.SwitchLens(LensId.TELEPHOTO_3X)
+                )
+            else -> CoachingHint(
+                "Hold shutter for burst — pick the best frame",
+                ArrowDirection.NONE,
+                priority = 4,
+                action = CoachingAction.EnableBurst
+            )
         }
     }
 
@@ -279,6 +330,16 @@ class CoachingEngine @Inject constructor() {
                 CoachingHint("Macro needs light — use a lamp or move to window", ArrowDirection.NONE, priority = 6)
             else -> CoachingHint("Get as close as possible — let autofocus lock", ArrowDirection.NONE, priority = 4)
         }
+    }
+
+    private fun autoMacroHint(analysis: SceneAnalysis): CoachingHint? {
+        if (analysis.distanceRange != DistanceRange.MACRO && analysis.distanceRange != DistanceRange.NEAR) return null
+        return CoachingHint(
+            "Subject is close — switch to Macro mode",
+            ArrowDirection.NONE,
+            priority = 6,
+            action = CoachingAction.SwitchPreset(CameraPreset.MACRO)
+        )
     }
 
     private fun mixedLightingHint(): CoachingHint {
