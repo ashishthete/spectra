@@ -21,6 +21,26 @@ class NoiseReducerTest {
         assertThat(NoiseReducer.computeSigma(3200)).isWithin(0.01f).of(8.5f)
     }
 
+    @Test fun `tiled bilateral matches single-pass for small images`() {
+        val w = 64; val h = 64
+        val channel = IntArray(w * h) { (it * 3 + 17) % 256 }
+        val singlePass = NoiseReducer.bilateralFilter(channel.copyOf(), w, h, 3, 1.0f)
+        val tiledPass = NoiseReducer.tiledBilateralFilter(channel.copyOf(), w, h, 3, 1.0f, tileSize = 128)
+        for (i in singlePass.indices) {
+            assertThat(tiledPass[i]).isWithin(1).of(singlePass[i])
+        }
+    }
+
+    @Test fun `tiled bilateral matches single-pass with multiple tiles`() {
+        val w = 64; val h = 64
+        val channel = IntArray(w * h) { (it * 7 + 31) % 256 }
+        val singlePass = NoiseReducer.bilateralFilter(channel.copyOf(), w, h, 3, 1.0f)
+        val tiledPass = NoiseReducer.tiledBilateralFilter(channel.copyOf(), w, h, 3, 1.0f, tileSize = 16)
+        for (i in singlePass.indices) {
+            assertThat(tiledPass[i]).isWithin(1).of(singlePass[i])
+        }
+    }
+
     @Test fun `bilateral filter smooths uniform channel`() {
         val w = 8; val h = 8
         val channel = IntArray(w * h) { 128 }
