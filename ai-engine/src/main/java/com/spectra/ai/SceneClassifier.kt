@@ -83,7 +83,7 @@ class SceneClassifier @Inject constructor(
 
     private fun classifyBase(bitmap: Bitmap, faceData: FaceData = FaceData.EMPTY): Pair<SceneType, Float> {
         val interp = interpreter
-        if (interp != null) {
+        if (interp != null && labelMap.isNotEmpty()) {
             val resized = Bitmap.createScaledBitmap(bitmap, inputSize, inputSize, true)
             val inputBuffer = bitmapToByteBuffer(resized)
             resized.recycle()
@@ -276,7 +276,7 @@ class SceneClassifier @Inject constructor(
                 }
             }
         } catch (_: Exception) {
-            SceneType.entries.forEach { labelMap.add(it) }
+            // Leave labelMap empty so heuristic path is used when labels file is missing
         }
     }
 

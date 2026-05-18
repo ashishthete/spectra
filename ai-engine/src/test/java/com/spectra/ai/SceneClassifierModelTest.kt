@@ -3,6 +3,7 @@ package com.spectra.ai
 import com.google.common.truth.Truth.assertThat
 import com.spectra.core.model.SceneType
 import org.junit.Test
+import java.io.File
 
 class SceneClassifierModelTest {
 
@@ -39,6 +40,55 @@ class SceneClassifierModelTest {
         assertThat(result).hasSize(1)
         assertThat(result[0].first).isEqualTo(SceneType.PORTRAIT)
         assertThat(result[0].second).isWithin(0.001f).of(0.6f)
+    }
+
+    @Test
+    fun `scene_labels_txt has exactly 365 lines for Places365`() {
+        val lines = loadSceneLabelsFromAssets()
+        assertThat(lines).hasSize(365)
+    }
+
+    @Test
+    fun `every scene label maps to a valid SceneType`() {
+        val validNames = SceneType.entries.map { it.name }.toSet()
+        val lines = loadSceneLabelsFromAssets()
+        for ((index, line) in lines.withIndex()) {
+            assertThat(validNames).contains(line.trim())
+        }
+    }
+
+    @Test
+    fun `scene labels cover key SceneType categories`() {
+        val lines = loadSceneLabelsFromAssets()
+        val mapped = lines.map { line ->
+            SceneType.entries.find { it.name.equals(line.trim(), ignoreCase = true) }
+                ?: SceneType.UNKNOWN
+        }
+        // Verify that the label file maps to all important scene types
+        val presentTypes = mapped.toSet()
+        assertThat(presentTypes).contains(SceneType.LANDSCAPE)
+        assertThat(presentTypes).contains(SceneType.PORTRAIT)
+        assertThat(presentTypes).contains(SceneType.FOOD)
+        assertThat(presentTypes).contains(SceneType.NIGHT)
+        assertThat(presentTypes).contains(SceneType.ARCHITECTURE)
+        assertThat(presentTypes).contains(SceneType.MACRO)
+        assertThat(presentTypes).contains(SceneType.PET)
+        assertThat(presentTypes).contains(SceneType.ACTION)
+        assertThat(presentTypes).contains(SceneType.DOCUMENT)
+        assertThat(presentTypes).contains(SceneType.INDOOR)
+    }
+
+    /**
+     * Loads scene_labels.txt from the assets source directory.
+     * Unit tests don't have an Android AssetManager, so we read the file
+     * directly from the source tree.
+     */
+    private fun loadSceneLabelsFromAssets(): List<String> {
+        // Walk up from the test class output to find the project assets dir
+        val projectDir = File(System.getProperty("user.dir"))
+        val assetsFile = File(projectDir, "src/main/assets/scene_labels.txt")
+        assertThat(assetsFile.exists()).isTrue()
+        return assetsFile.readLines().filter { it.isNotBlank() }
     }
 
     private fun applySoftmax(input: FloatArray): FloatArray {
