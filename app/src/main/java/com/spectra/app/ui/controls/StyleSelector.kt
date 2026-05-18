@@ -27,7 +27,7 @@ fun StyleSelector(
 ) {
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         PhotoStyle.entries.forEach { style ->
@@ -35,14 +35,14 @@ fun StyleSelector(
             Text(
                 text = style.label,
                 color = if (isActive) HudColors.accent else HudColors.textMuted,
-                fontSize = if (isActive) 11.sp else 10.sp,
+                fontSize = if (isActive) 13.sp else 12.sp,
                 fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                 fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 modifier = Modifier
                     .clickable { onStyleSelected(style) }
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
             )
         }
     }

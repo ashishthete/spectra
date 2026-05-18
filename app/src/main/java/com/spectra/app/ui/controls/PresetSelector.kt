@@ -49,17 +49,17 @@ fun PresetSelector(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .clickable { onPresetSelected(preset) }
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
             ) {
                 Text(
                     text = preset.icon,
-                    fontSize = if (isActive) 20.sp else 16.sp,
+                    fontSize = if (isActive) 22.sp else 18.sp,
                     textAlign = TextAlign.Center
                 )
                 Text(
                     text = preset.label,
                     color = if (isActive) HudColors.accent else HudColors.textMuted,
-                    fontSize = if (isActive) 10.sp else 9.sp,
+                    fontSize = if (isActive) 11.sp else 10.sp,
                     textAlign = TextAlign.Center,
                     maxLines = 1
                 )

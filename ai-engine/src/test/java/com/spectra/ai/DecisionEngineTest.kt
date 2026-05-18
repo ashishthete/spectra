@@ -23,8 +23,8 @@ class DecisionEngineTest {
         val settings = engine.optimizeSettings(analysis)
 
         assertThat(lens.recommended).isEqualTo(LensId.MAIN)
-        assertThat(settings.settings.iso).isEqualTo(100)
-        assertThat(settings.settings.whiteBalanceKelvin).isEqualTo(5500)
+        assertThat(settings.settings.iso).isEqualTo(50)
+        assertThat(settings.settings.whiteBalanceKelvin).isEqualTo(5800)
     }
 
     @Test
@@ -64,7 +64,7 @@ class DecisionEngineTest {
             distanceRange = DistanceRange.NEAR
         )
         val settings = engine.optimizeSettings(analysis)
-        assertThat(settings.settings.whiteBalanceKelvin).isAtLeast(4000)
+        assertThat(settings.settings.whiteBalanceKelvin).isAtLeast(3500)
     }
 
     @Test

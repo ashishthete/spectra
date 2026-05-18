@@ -3,7 +3,8 @@ package com.spectra.camera
 data class SensorMetadata(
     val iso: Int = 0,
     val exposureTimeNs: Long = 0L,
-    val focusDistanceDiopters: Float = 0f
+    val focusDistanceDiopters: Float = 0f,
+    val colorTemperatureK: Int = 0
 ) {
     val shutterSpeedDenominator: Int
         get() = if (exposureTimeNs > 0) {

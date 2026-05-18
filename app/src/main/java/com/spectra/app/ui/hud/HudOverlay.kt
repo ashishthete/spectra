@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import com.spectra.ai.model.ArrowDirection
 import com.spectra.app.ui.theme.HudColors
 import com.spectra.core.model.CameraMode
+import com.spectra.core.model.GridMode
 import com.spectra.core.model.HudState
 
 @Composable
@@ -45,7 +47,7 @@ fun HudOverlay(
             exit = fadeOut()
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
-                CrosshairAndGrid()
+                CrosshairAndGrid(gridMode = state.gridMode)
 
                 SceneReadout(
                     sceneLabel = state.sceneLabel,
@@ -61,10 +63,45 @@ fun HudOverlay(
                     mode = state.mode,
                     actualIso = state.actualIso,
                     actualShutterNs = state.actualShutterSpeedNs,
+                    actualColorTemperature = state.actualColorTemperature,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(end = 20.dp, top = 60.dp)
                 )
+
+                if (state.isLowLight || state.isHdrActive) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 60.dp)
+                    ) {
+                        if (state.isHdrActive) {
+                            Text(
+                                text = "HDR",
+                                color = HudColors.accent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier
+                                    .background(HudColors.surfaceGlass, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                        if (state.isLowLight) {
+                            Text(
+                                text = "NIGHT",
+                                color = HudColors.accent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier
+                                    .background(HudColors.surfaceGlass, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
 
                 if (state.aeAfLocked) {
                     Text(
@@ -105,6 +142,21 @@ fun HudOverlay(
                     }
                 }
 
+                if (state.beautyLevel > 0 && state.isFrontCamera) {
+                    Text(
+                        text = "BEAUTY ${"●".repeat(state.beautyLevel)}${"○".repeat(3 - state.beautyLevel)}",
+                        color = HudColors.accent.copy(alpha = 0.6f),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Medium,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(end = 20.dp, top = 110.dp)
+                            .background(HudColors.surfaceGlass, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+
                 LevelIndicator(
                     angle = state.levelAngle,
                     modifier = Modifier.align(Alignment.Center)
@@ -139,7 +191,7 @@ fun HudOverlay(
                         onDismiss = onCoachingDismiss,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(bottom = 200.dp)
+                            .padding(bottom = 250.dp)
                     )
                 }
             }

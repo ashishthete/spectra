@@ -23,6 +23,7 @@ fun SettingsReadout(
     mode: CameraMode,
     actualIso: Int,
     actualShutterNs: Long,
+    actualColorTemperature: Int = 0,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -45,6 +46,13 @@ fun SettingsReadout(
                 fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.End
             )
+            Text(
+                text = settings.formattedWb,
+                color = HudColors.accent.copy(alpha = 0.5f),
+                fontSize = 9.sp,
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.End
+            )
         } else if (actualIso > 0) {
             val shutterDenom = if (actualShutterNs > 0) {
                 (1_000_000_000L / actualShutterNs).toInt().coerceIn(1, 32000)
@@ -57,6 +65,15 @@ fun SettingsReadout(
                 fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.End
             )
+            if (actualColorTemperature > 0) {
+                Text(
+                    text = "${actualColorTemperature}K",
+                    color = HudColors.textMuted.copy(alpha = 0.7f),
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.End
+                )
+            }
         }
     }
 }

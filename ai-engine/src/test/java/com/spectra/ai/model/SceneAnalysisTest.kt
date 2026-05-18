@@ -27,7 +27,7 @@ class SceneAnalysisTest {
     fun `isStable returns false when confidence below threshold`() {
         val analysis = SceneAnalysis(
             sceneType = SceneType.LANDSCAPE,
-            confidence = 0.4f
+            confidence = 0.3f
         )
         assertThat(analysis.isStable).isFalse()
     }

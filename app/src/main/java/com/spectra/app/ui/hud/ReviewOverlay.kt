@@ -40,7 +40,6 @@ fun ReviewOverlay(
     imageUri: String?,
     isVisible: Boolean,
     onKeep: () -> Unit,
-    onShare: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -65,19 +64,171 @@ fun ReviewOverlay(
                 modifier = Modifier.fillMaxSize()
             )
 
+            Text(
+                text = "BEST OF 5",
+                color = HudColors.accent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 1.sp,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(16.dp)
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .padding(bottom = 48.dp, start = 32.dp, end = 32.dp),
+                    .padding(bottom = 48.dp, start = 48.dp, end = 48.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                ReviewButton(icon = "✕", label = "Delete", onClick = onDelete)
+                ReviewButton(icon = "✕", label = "Discard", onClick = onDelete)
                 ReviewButton(icon = "✓", label = "Keep", isPrimary = true, onClick = onKeep)
-                ReviewButton(icon = "↗", label = "Share", onClick = onShare)
             }
         }
+    }
+}
+
+@Composable
+fun SmartReviewOverlay(
+    bestOriginalUri: String?,
+    aiEnhancedUri: String?,
+    isEnhancing: Boolean,
+    isVisible: Boolean,
+    onSaveOriginal: () -> Unit,
+    onSaveEnhanced: () -> Unit,
+    onSaveBoth: () -> Unit,
+    onDiscard: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = isVisible && bestOriginalUri != null,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = modifier
+    ) {
+        val context = LocalContext.current
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(Uri.parse(bestOriginalUri ?: ""))
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "Best original",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Text(
+                        text = "RAW · BEST OF 5",
+                        color = HudColors.accent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(12.dp)
+                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(HudColors.accent.copy(alpha = 0.5f))
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    if (aiEnhancedUri != null) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(Uri.parse(aiEnhancedUri))
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "AI enhanced",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF111111)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            EnhancingShimmer()
+                        }
+                    }
+                    Text(
+                        text = if (isEnhancing) "PROCESSING..." else "PROCESSED",
+                        color = if (isEnhancing) HudColors.textMuted else HudColors.accent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(12.dp)
+                            .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(bottom = 32.dp, start = 16.dp, end = 16.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ReviewButton(icon = "✕", label = "Discard", onClick = onDiscard)
+                ReviewButton(icon = "◯", label = "Raw", onClick = onSaveOriginal)
+                if (aiEnhancedUri != null) {
+                    ReviewButton(icon = "✦", label = "Processed", onClick = onSaveEnhanced)
+                    ReviewButton(icon = "✓✓", label = "Both", isPrimary = true, onClick = onSaveBoth)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EnhancingShimmer() {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = "⟳",
+            fontSize = 28.sp,
+            color = HudColors.accent.copy(alpha = 0.6f)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Processing...",
+            color = HudColors.textMuted,
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace
+        )
     }
 }
 

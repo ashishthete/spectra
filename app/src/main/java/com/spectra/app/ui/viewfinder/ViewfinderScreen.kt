@@ -8,9 +8,12 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +37,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
 import com.spectra.core.model.PhotoStyle
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -47,8 +51,11 @@ import com.spectra.app.ui.controls.TopControlBar
 import com.spectra.app.ui.hud.AspectRatioOverlay
 import com.spectra.app.ui.hud.BeautyOverlay
 import com.spectra.app.ui.hud.CaptureFlash
+import com.spectra.app.ui.hud.FocusPeakingOverlay
 import com.spectra.app.ui.hud.HudOverlay
 import com.spectra.app.ui.hud.ReviewOverlay
+import com.spectra.app.ui.hud.SmartReviewOverlay
+import com.spectra.app.ui.hud.ZebraOverlay
 import com.spectra.app.ui.pro.ProModePanel
 import com.spectra.app.ui.theme.HudColors
 import com.spectra.app.ui.tips.ReferenceCard
@@ -67,6 +74,9 @@ fun ViewfinderScreen(
     val haptic = LocalHapticFeedback.current
 
     var lastZoomRatio by remember { mutableFloatStateOf(1f) }
+    val density = LocalDensity.current
+    val topDeadZonePx = with(density) { 60.dp.toPx() }
+    val bottomDeadZonePx = with(density) { 180.dp.toPx() }
 
     LaunchedEffect(Unit) {
         viewModel.toastMessage.collect { message ->
@@ -111,12 +121,16 @@ fun ViewfinderScreen(
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { offset ->
-                            viewModel.tapToFocus(offset.x, offset.y)
+                            val inControls = offset.y < topDeadZonePx || offset.y > size.height - bottomDeadZonePx
+                            if (!inControls) viewModel.tapToFocus(offset.x, offset.y)
                         },
                         onDoubleTap = { viewModel.toggleHud() },
                         onLongPress = { offset ->
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            viewModel.longPressToLock(offset.x, offset.y)
+                            val inControls = offset.y < topDeadZonePx || offset.y > size.height - bottomDeadZonePx
+                            if (!inControls) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                viewModel.longPressToLock(offset.x, offset.y)
+                            }
                         }
                     )
                 }
@@ -126,7 +140,40 @@ fun ViewfinderScreen(
 
         AspectRatioOverlay(aspectRatio = hudState.aspectRatio)
 
+        if (hudState.focusPeakingEnabled && hudState.focusPeakingData != null) {
+            FocusPeakingOverlay(
+                edgeData = hudState.focusPeakingData,
+                width = hudState.analysisWidth,
+                height = hudState.analysisHeight
+            )
+        }
+
+        if (hudState.zebraEnabled && hudState.zebraData != null) {
+            ZebraOverlay(
+                zebraData = hudState.zebraData,
+                width = hudState.analysisWidth,
+                height = hudState.analysisHeight
+            )
+        }
+
         CaptureFlash(visible = hudState.showCaptureFlash)
+
+        if (hudState.isCapturing) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(HudColors.surfaceGlass, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = "Selecting best shot...",
+                    color = HudColors.accent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
 
         HudOverlay(
             state = hudState,
@@ -172,66 +219,110 @@ fun ViewfinderScreen(
             )
         }
 
+        if (hudState.preset == com.spectra.core.model.CameraPreset.PRO) {
+            com.spectra.app.ui.pro.Histogram(
+                histogramData = hudState.histogramData,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(end = 16.dp, top = 120.dp)
+            )
+        }
+
         ProModePanel(
             isVisible = hudState.preset == com.spectra.core.model.CameraPreset.PRO,
             settings = hudState.settings,
             aiSettings = hudState.aiRecommendedSettings,
             isManualOverride = hudState.isManualOverride,
+            focusPeakingEnabled = hudState.focusPeakingEnabled,
+            zebraEnabled = hudState.zebraEnabled,
+            zebraThreshold = hudState.zebraThreshold,
+            gridLabel = hudState.gridMode.label,
             onIsoChange = { viewModel.updateProSetting(iso = it) },
             onShutterChange = { viewModel.updateProSetting(shutterSpeedDenominator = it) },
             onWbChange = { viewModel.updateProSetting(whiteBalanceKelvin = it) },
             onEvChange = { viewModel.updateProSetting(exposureCompensation = it) },
             onFocusChange = { viewModel.updateProSetting(focusDistance = it) },
             onSnapToAi = { viewModel.snapToAiRecommendation() },
+            onToggleFocusPeaking = { viewModel.toggleFocusPeaking() },
+            onToggleZebra = { viewModel.toggleZebra() },
+            onCycleZebraThreshold = { viewModel.cycleZebraThreshold() },
+            onCycleGrid = { viewModel.cycleGridMode() },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 200.dp)
+                .padding(bottom = 230.dp)
         )
 
-        PresetSelector(
-            currentPreset = hudState.preset,
-            onPresetSelected = { viewModel.setPreset(it) },
+        if (hudState.isRecording) {
+            val secs = (hudState.recordingDurationMs / 1000).toInt()
+            val mins = secs / 60
+            val s = secs % 60
+            Text(
+                text = "%02d:%02d".format(mins, s),
+                color = androidx.compose.ui.graphics.Color.Red,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 60.dp)
+                    .background(HudColors.surfaceGlass, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+        }
+
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 140.dp)
-        )
+                .padding(bottom = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            PresetSelector(
+                currentPreset = hudState.preset,
+                onPresetSelected = { viewModel.setPreset(it) },
+            )
 
-        StyleSelector(
-            currentStyle = hudState.photoStyle,
-            onStyleSelected = { viewModel.setPhotoStyle(it) },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 108.dp)
-        )
+            if (hudState.mode != CameraMode.VIDEO) {
+                StyleSelector(
+                    currentStyle = hudState.photoStyle,
+                    onStyleSelected = { viewModel.setPhotoStyle(it) },
+                )
+            }
 
-        CaptureControls(
-            activeLens = hudState.activeLens,
-            lastCapturedUri = hudState.lastCapturedUri,
-            isFrontCamera = hudState.isFrontCamera,
-            onShutterTap = { viewModel.capturePhoto() },
-            onBurstStart = { viewModel.startBurst() },
-            onBurstEnd = { viewModel.stopBurst() },
-            onLensCycle = { viewModel.cycleLens() },
-            onGalleryClick = {
-                val uri = hudState.lastCapturedUri
-                val intent = if (uri != null) {
-                    Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(android.net.Uri.parse(uri), "image/*")
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            CaptureControls(
+                activeLens = hudState.activeLens,
+                lastCapturedUri = hudState.lastCapturedUri,
+                isFrontCamera = hudState.isFrontCamera,
+                isVideoMode = hudState.mode == CameraMode.VIDEO,
+                isRecording = hudState.isRecording,
+                onShutterTap = { viewModel.capturePhoto() },
+                onBurstStart = { viewModel.startBurst() },
+                onBurstEnd = { viewModel.stopBurst() },
+                onLensCycle = { viewModel.cycleLens() },
+                onModeToggle = { isVideo ->
+                    if (isVideo) viewModel.setMode(CameraMode.VIDEO)
+                    else viewModel.setMode(CameraMode.PHOTO)
+                },
+                onGalleryClick = {
+                    val uri = hudState.lastCapturedUri
+                    val mimeType = if (hudState.mode == CameraMode.VIDEO) "video/*" else "image/*"
+                    val intent = if (uri != null) {
+                        Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(android.net.Uri.parse(uri), mimeType)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        }
+                    } else {
+                        Intent(Intent.ACTION_VIEW).apply {
+                            type = mimeType
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
                     }
-                } else {
-                    Intent(Intent.ACTION_VIEW).apply {
-                        type = "image/*"
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                }
-                try { context.startActivity(intent) } catch (_: Exception) { }
-            },
-            onFlipCamera = { viewModel.flipCamera() },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp)
-        )
+                    try { context.startActivity(intent) } catch (_: Exception) { }
+                },
+                onFlipCamera = { viewModel.flipCamera() },
+                onRecordToggle = { viewModel.toggleRecording() },
+            )
+        }
 
         AnimatedVisibility(
             visible = !cameraReady,
@@ -248,21 +339,6 @@ fun ViewfinderScreen(
             )
         }
 
-        val lensHint = hudState.lensHint
-        if (lensHint != null && !hudState.showReview) {
-            Text(
-                text = lensHint,
-                color = HudColors.accent,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 20.dp, bottom = 70.dp)
-                    .background(HudColors.surfaceGlass, RoundedCornerShape(4.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            )
-        }
 
         val tip = currentTip
         if (tip != null) {
@@ -277,19 +353,18 @@ fun ViewfinderScreen(
             imageUri = hudState.reviewUri,
             isVisible = hudState.showReview,
             onKeep = { viewModel.dismissReview() },
-            onShare = {
-                viewModel.shareReviewPhoto()
-                val uri = hudState.reviewUri
-                if (uri != null) {
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "image/*"
-                        putExtra(Intent.EXTRA_STREAM, android.net.Uri.parse(uri))
-                        flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    }
-                    try { context.startActivity(Intent.createChooser(intent, "Share photo")) } catch (_: Exception) { }
-                }
-            },
             onDelete = { viewModel.deleteReviewPhoto() }
+        )
+
+        SmartReviewOverlay(
+            bestOriginalUri = hudState.bestOriginalUri,
+            aiEnhancedUri = hudState.aiEnhancedUri,
+            isEnhancing = hudState.isEnhancing,
+            isVisible = hudState.showSmartReview,
+            onSaveOriginal = { viewModel.saveOriginalOnly() },
+            onSaveEnhanced = { viewModel.saveEnhancedOnly() },
+            onSaveBoth = { viewModel.saveBoth() },
+            onDiscard = { viewModel.discardSmartCapture() }
         )
     }
 }
@@ -297,22 +372,21 @@ fun ViewfinderScreen(
 private fun buildPreviewMatrix(style: PhotoStyle, isFrontCamera: Boolean): ColorMatrix? {
     val combined = AndroidColorMatrix()
 
-    // Base enhancement (matches post-processing)
     val enhance = AndroidColorMatrix(floatArrayOf(
-        1.08f, 0f, 0f, 0f, -10f,
-        0f, 1.08f, 0f, 0f, -10f,
-        0f, 0f, 1.08f, 0f, -10f,
+        1.03f, 0f, 0f, 0f, -4f,
+        0f, 1.03f, 0f, 0f, -4f,
+        0f, 0f, 1.03f, 0f, -4f,
         0f, 0f, 0f, 1f, 0f
     ))
-    val satBoost = AndroidColorMatrix().apply { setSaturation(1.1f) }
+    val satBoost = AndroidColorMatrix().apply { setSaturation(1.05f) }
     enhance.postConcat(satBoost)
     combined.postConcat(enhance)
 
     if (isFrontCamera) {
         combined.postConcat(AndroidColorMatrix(floatArrayOf(
-            1.05f, 0.02f, 0f, 0f, 10f,
-            0f, 1.03f, 0f, 0f, 6f,
-            0f, 0f, 0.98f, 0f, -2f,
+            1.02f, 0.01f, 0f, 0f, 3f,
+            0f, 1.01f, 0f, 0f, 2f,
+            0f, 0f, 0.99f, 0f, -1f,
             0f, 0f, 0f, 1f, 0f
         )))
     }
@@ -359,3 +433,4 @@ private fun buildPreviewMatrix(style: PhotoStyle, isFrontCamera: Boolean): Color
 
     return ColorMatrix(combined.array)
 }
+

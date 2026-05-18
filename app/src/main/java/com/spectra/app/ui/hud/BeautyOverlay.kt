@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
 @Composable
@@ -23,29 +22,16 @@ fun BeautyOverlay(
         modifier = modifier
     ) {
         val warmth = when (beautyLevel) {
-            1 -> 0.03f
-            2 -> 0.06f
-            3 -> 0.09f
+            1 -> 0.02f
+            2 -> 0.04f
+            3 -> 0.06f
             else -> 0f
         }
 
-        Box(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFFFFF5E6).copy(alpha = warmth))
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.radialGradient(
-                            0f to Color.Transparent,
-                            0.6f to Color.Transparent,
-                            1f to Color.Black.copy(alpha = warmth * 0.6f)
-                        )
-                    )
-            )
-        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFFFFF5E6).copy(alpha = warmth))
+        )
     }
 }

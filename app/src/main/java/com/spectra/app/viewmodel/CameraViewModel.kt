@@ -526,7 +526,7 @@ class CameraViewModel @Inject constructor(
         } else {
             val mode = when (preset) {
                 CameraPreset.NIGHT -> CameraMode.NIGHT
-                CameraPreset.PORTRAIT, CameraPreset.COUPLE, CameraPreset.SELFIE -> CameraMode.PORT
+                CameraPreset.PORTRAIT -> CameraMode.PORT
                 else -> CameraMode.PHOTO
             }
             _hudState.update { it.copy(

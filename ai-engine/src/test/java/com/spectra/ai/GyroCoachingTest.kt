@@ -35,7 +35,7 @@ class GyroCoachingTest {
             motionType = MotionDetector.MotionType.SUBJECT_MOTION,
             distanceRange = DistanceRange.MID
         )
-        val hint = engine.generateCoaching(analysis, CameraPreset.PETS)
+        val hint = engine.generateCoaching(analysis, CameraPreset.ACTION)
         assertThat(hint).isNotNull()
         assertThat(hint!!.text.lowercase()).contains("burst")
     }

@@ -10,6 +10,7 @@ import com.google.mlkit.vision.face.FaceLandmark
 import com.spectra.ai.model.DetectedFace
 import com.spectra.ai.model.FaceData
 import com.spectra.ai.model.PointF
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,11 +35,10 @@ class FaceDetectorWrapper @Inject constructor() {
         FaceDetection.getClient(options)
     }
 
-    private var processing = false
+    private val processing = AtomicBoolean(false)
 
     suspend fun detectFaces(bitmap: Bitmap, imageWidth: Int, imageHeight: Int) {
-        if (processing) return
-        processing = true
+        if (!processing.compareAndSet(false, true)) return
 
         try {
             val inputImage = InputImage.fromBitmap(bitmap, 0)
@@ -70,7 +70,7 @@ class FaceDetectorWrapper @Inject constructor() {
         } catch (_: Exception) {
             _faceData.value = FaceData.EMPTY
         } finally {
-            processing = false
+            processing.set(false)
         }
     }
 

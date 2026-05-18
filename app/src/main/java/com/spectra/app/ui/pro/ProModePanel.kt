@@ -97,12 +97,20 @@ fun ProModePanel(
     settings: CameraSettings,
     aiSettings: CameraSettings,
     isManualOverride: Boolean,
+    focusPeakingEnabled: Boolean = false,
+    zebraEnabled: Boolean = false,
+    gridLabel: String = "3×3",
     onIsoChange: (Int) -> Unit,
     onShutterChange: (Int) -> Unit,
     onWbChange: (Int) -> Unit,
     onEvChange: (Float) -> Unit,
     onFocusChange: (Float) -> Unit,
     onSnapToAi: () -> Unit,
+    zebraThreshold: Int = 235,
+    onToggleFocusPeaking: () -> Unit = {},
+    onToggleZebra: () -> Unit = {},
+    onCycleZebraThreshold: () -> Unit = {},
+    onCycleGrid: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedParam by remember { mutableStateOf(ProParam.ISO) }
@@ -288,6 +296,56 @@ fun ProModePanel(
                     fontFamily = FontFamily.Monospace
                 )
             }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                ProToggle("PEAK", focusPeakingEnabled, onToggleFocusPeaking)
+                ProToggle("ZEBRA", zebraEnabled, onToggleZebra)
+                if (zebraEnabled) {
+                    Text(
+                        text = "${zebraThreshold / 255f * 100f}".take(2) + "%",
+                        color = HudColors.accent.copy(alpha = 0.5f),
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .background(HudColors.surfaceGlass, RoundedCornerShape(4.dp))
+                            .clickable { onCycleZebraThreshold() }
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                    )
+                }
+                Text(
+                    text = "GRID: $gridLabel",
+                    color = HudColors.accent.copy(alpha = 0.5f),
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier
+                        .background(HudColors.surfaceGlass, RoundedCornerShape(4.dp))
+                        .clickable { onCycleGrid() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun ProToggle(label: String, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        text = label,
+        color = if (enabled) HudColors.accent else HudColors.accent.copy(alpha = 0.3f),
+        fontSize = 9.sp,
+        fontWeight = if (enabled) FontWeight.Bold else FontWeight.Normal,
+        fontFamily = FontFamily.Monospace,
+        modifier = Modifier
+            .background(
+                if (enabled) HudColors.accent.copy(alpha = 0.15f) else HudColors.surfaceGlass,
+                RoundedCornerShape(4.dp)
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    )
 }

@@ -26,6 +26,7 @@ class FrameProvider @Inject constructor() : ImageAnalysis.Analyzer {
         if (frameCount % analyzeEveryN == 0) {
             try {
                 val bitmap = image.toBitmap()
+                latestFrame?.recycle()
                 latestFrame = bitmap
                 _frames.tryEmit(bitmap)
             } catch (_: Exception) {
