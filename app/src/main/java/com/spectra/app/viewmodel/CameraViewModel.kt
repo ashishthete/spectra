@@ -17,6 +17,7 @@ import com.spectra.core.model.CameraMode
 import com.spectra.core.model.CameraPreset
 import com.spectra.core.model.CameraSettings
 import com.spectra.core.model.FlashMode
+import com.spectra.core.model.CaptureExplanation
 import com.spectra.core.model.HudState
 import com.spectra.core.model.LensId
 import com.spectra.core.model.SceneType
@@ -696,6 +697,7 @@ class CameraViewModel @Inject constructor(
 
         _captureInProgress.value = true
         _hudState.update { it.copy(showCaptureFlash = true, isCapturing = true) }
+        val explanation = buildCaptureExplanation()
         viewModelScope.launch {
             delay(120)
             _hudState.update { it.copy(showCaptureFlash = false) }
@@ -749,8 +751,15 @@ class CameraViewModel @Inject constructor(
                 showSmartReview = true,
                 bestOriginalUri = result.bestOriginalUri,
                 aiEnhancedUri = null,
-                isEnhancing = true
+                isEnhancing = true,
+                captureExplanation = explanation,
+                showAiExplainer = true
             )}
+
+            viewModelScope.launch {
+                delay(3000)
+                _hudState.update { it.copy(showAiExplainer = false) }
+            }
 
             viewModelScope.launch {
                 try {
@@ -793,8 +802,14 @@ class CameraViewModel @Inject constructor(
             showSmartReview = false,
             bestOriginalUri = null,
             aiEnhancedUri = null,
-            isEnhancing = false
+            isEnhancing = false,
+            captureExplanation = null,
+            showAiExplainer = false
         )}
+    }
+
+    fun dismissAiExplainer() {
+        _hudState.update { it.copy(showAiExplainer = false) }
     }
 
     fun saveOriginalOnly() {
@@ -974,6 +989,49 @@ class CameraViewModel @Inject constructor(
         val darkRatio = darkCount / total.toFloat()
         val brightRatio = brightCount / total.toFloat()
         return (darkRatio * brightRatio * 100f).coerceIn(0f, 1f)
+    }
+
+    private fun buildCaptureExplanation(): CaptureExplanation {
+        val state = _hudState.value
+        val reasons = mutableListOf<String>()
+
+        if (state.sceneLabel.isNotEmpty() && state.sceneLabel != "READY") {
+            reasons.add("${state.sceneLabel.lowercase()} scene detected")
+        }
+
+        if (state.lightingLabel.isNotEmpty() && state.lightingLabel != "—") {
+            reasons.add("${state.lightingLabel.lowercase()} lighting")
+        }
+
+        if (state.motionLevel >= 3) {
+            reasons.add("fast motion — high shutter speed selected")
+        } else if (state.motionLevel >= 2) {
+            reasons.add("moderate motion detected")
+        }
+
+        if (state.isHdrActive) {
+            reasons.add("high contrast — HDR bracketing applied")
+        }
+
+        if (state.faceCount > 0) {
+            reasons.add("${state.faceCount} face${if (state.faceCount > 1) "s" else ""} detected")
+        }
+
+        if (state.isLowLight) {
+            reasons.add("low light — multi-frame noise reduction")
+        }
+
+        return CaptureExplanation(
+            iso = if (state.actualIso > 0) state.actualIso else state.settings.iso,
+            shutterSpeedNs = if (state.actualShutterSpeedNs > 0) state.actualShutterSpeedNs else
+                (1_000_000_000L / state.settings.shutterSpeedDenominator.coerceAtLeast(1)),
+            sceneLabel = state.sceneLabel,
+            lightingLabel = state.lightingLabel,
+            isHdrApplied = state.isHdrActive,
+            isPortraitBokeh = state.mode == CameraMode.PORT && state.faceCount > 0,
+            isNightMode = state.mode == CameraMode.NIGHT || state.isLowLight,
+            reasons = reasons
+        )
     }
 
     override fun onCleared() {
