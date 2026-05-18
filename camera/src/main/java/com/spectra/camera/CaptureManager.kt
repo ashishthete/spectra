@@ -1172,6 +1172,22 @@ class CaptureManager @Inject constructor(
             }
         }
 
+        fun nrSigma(nr: Int): Float = 0.5f + (nr / 100f) * 3f
+
+        fun sharpnessFromParams(sharpness: Int): Float = 0.1f + (sharpness / 100f) * 0.6f
+
+        fun saturationMultiplier(sat: Int): Float = 0.5f + (sat / 100f) * 1.0f
+
+        fun contrastScale(contrast: Int): Float {
+            val normalized = (contrast - 50) / 50f
+            return 1.0f + normalized * 0.2f
+        }
+
+        fun contrastOffset(contrast: Int): Float {
+            val scale = contrastScale(contrast)
+            return (-128f * (scale - 1f))
+        }
+
         fun applySharpenLuminance(bitmap: android.graphics.Bitmap, sceneType: SceneType) {
             val strength = getSharpnessStrength(sceneType)
             val w = bitmap.width
