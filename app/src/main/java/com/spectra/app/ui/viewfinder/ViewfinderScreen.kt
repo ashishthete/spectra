@@ -309,8 +309,8 @@ fun ViewfinderScreen(
                 viewModel.setZoom(ratio)
             },
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 16.dp, bottom = 220.dp)
+                .align(Alignment.CenterEnd)
+                .padding(end = 8.dp)
         )
 
         Column(

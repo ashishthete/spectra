@@ -2,17 +2,14 @@ package com.spectra.app.ui.controls
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -23,15 +20,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spectra.app.ui.theme.HudColors
-
-private val ZOOM_STOPS = floatArrayOf(1f, 2f, 5f, 10f)
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.ln
+import kotlin.math.pow
 
 @Composable
 fun ZoomDial(
@@ -41,123 +43,153 @@ fun ZoomDial(
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
-    var dragAccumulator by remember { mutableFloatStateOf(0f) }
+    var lastAngle by remember { mutableFloatStateOf(0f) }
 
     val label = formatZoom(zoomRatio)
 
-    if (expanded) {
-        ExpandedZoomBar(
-            zoomRatio = zoomRatio,
-            maxZoomRatio = maxZoomRatio,
-            onZoomChanged = onZoomChanged,
-            onCollapse = { expanded = false },
-            modifier = modifier
-        )
-    } else {
-        Box(
-            modifier = modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(HudColors.surfaceGlass)
-                .border(1.5.dp, HudColors.borderLight, CircleShape)
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { expanded = true }
-                    )
-                }
-                .pointerInput(maxZoomRatio) {
-                    detectDragGestures(
-                        onDragStart = { dragAccumulator = 0f },
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            dragAccumulator += -dragAmount.y
-                            val step = dragAccumulator / 80f
-                            if (step != 0f) {
-                                val newZoom = (zoomRatio + step * 0.5f).coerceIn(1f, maxZoomRatio)
-                                onZoomChanged(newZoom)
-                                dragAccumulator = 0f
-                            }
-                        }
-                    )
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = label,
-                color = if (zoomRatio > 1.05f) HudColors.accent else Color.White,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace
+    val animatedSize by animateFloatAsState(
+        targetValue = if (expanded) 140f else 44f,
+        animationSpec = tween(200),
+        label = "dialSize"
+    )
+
+    Box(
+        modifier = modifier
+            .size(animatedSize.dp)
+            .clip(CircleShape)
+            .background(HudColors.surfaceGlass)
+            .border(
+                if (expanded) 2.dp else 1.5.dp,
+                if (expanded) HudColors.accent.copy(alpha = 0.6f) else HudColors.borderLight,
+                CircleShape
+            )
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { expanded = !expanded }
+                )
+            }
+            .pointerInput(expanded, maxZoomRatio) {
+                if (!expanded) return@pointerInput
+                val centerX = size.width / 2f
+                val centerY = size.height / 2f
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        lastAngle = atan2(
+                            offset.y - centerY,
+                            offset.x - centerX
+                        )
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        val currentAngle = atan2(
+                            change.position.y - centerY,
+                            change.position.x - centerX
+                        )
+                        var delta = currentAngle - lastAngle
+                        if (delta > PI) delta -= (2 * PI).toFloat()
+                        if (delta < -PI) delta += (2 * PI).toFloat()
+
+                        val logMin = ln(1f)
+                        val logMax = ln(maxZoomRatio)
+                        val logCurrent = ln(zoomRatio)
+                        val sensitivity = (logMax - logMin) / (1.5f * PI.toFloat())
+                        val logNew = (logCurrent + delta * sensitivity).coerceIn(logMin, logMax)
+                        onZoomChanged(kotlin.math.exp(logNew))
+
+                        lastAngle = currentAngle
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (expanded) {
+            DialRing(
+                zoomRatio = zoomRatio,
+                maxZoomRatio = maxZoomRatio,
+                size = animatedSize
             )
         }
+
+        Text(
+            text = label,
+            color = if (zoomRatio > 1.05f) HudColors.accent else Color.White,
+            fontSize = if (expanded) 16.sp else 11.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace
+        )
     }
 }
 
 @Composable
-private fun ExpandedZoomBar(
+private fun DialRing(
     zoomRatio: Float,
     maxZoomRatio: Float,
-    onZoomChanged: (Float) -> Unit,
-    onCollapse: () -> Unit,
-    modifier: Modifier = Modifier
+    size: Float
 ) {
-    val stops = ZOOM_STOPS.filter { it <= maxZoomRatio }
+    val logMin = ln(1f)
+    val logMax = ln(maxZoomRatio)
+    val logCurrent = ln(zoomRatio)
+    val fraction = if (logMax > logMin) (logCurrent - logMin) / (logMax - logMin) else 0f
 
-    Row(
-        modifier = modifier
-            .background(HudColors.surfaceGlass, RoundedCornerShape(24.dp))
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        stops.forEach { stop ->
-            val isActive = isNearStop(zoomRatio, stop)
-            val animatedSize by animateFloatAsState(
-                targetValue = if (isActive) 38f else 32f,
-                animationSpec = tween(150),
-                label = "stopSize"
+    Canvas(modifier = Modifier.size(size.dp)) {
+        val center = Offset(this.size.width / 2f, this.size.height / 2f)
+        val radius = this.size.minDimension / 2f - 12f
+
+        drawCircle(
+            color = Color.White.copy(alpha = 0.15f),
+            radius = radius,
+            center = center,
+            style = Stroke(width = 4f)
+        )
+
+        val totalSweep = 270f
+        val startAngle = 135f
+        drawArc(
+            color = HudColors.accent,
+            startAngle = startAngle,
+            sweepAngle = totalSweep * fraction,
+            useCenter = false,
+            style = Stroke(width = 4f, cap = StrokeCap.Round),
+            topLeft = Offset(center.x - radius, center.y - radius),
+            size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2)
+        )
+
+        val tickCount = 12
+        for (i in 0..tickCount) {
+            val tickAngle = startAngle + (totalSweep * i / tickCount)
+            val rad = Math.toRadians(tickAngle.toDouble())
+            val isMajor = i % 3 == 0
+            val innerR = if (isMajor) radius - 10f else radius - 6f
+            val outerR = radius + 2f
+            drawLine(
+                color = Color.White.copy(alpha = if (isMajor) 0.5f else 0.25f),
+                start = Offset(
+                    center.x + innerR * kotlin.math.cos(rad).toFloat(),
+                    center.y + innerR * kotlin.math.sin(rad).toFloat()
+                ),
+                end = Offset(
+                    center.x + outerR * kotlin.math.cos(rad).toFloat(),
+                    center.y + outerR * kotlin.math.sin(rad).toFloat()
+                ),
+                strokeWidth = if (isMajor) 2f else 1f
             )
-
-            Box(
-                modifier = Modifier
-                    .size(animatedSize.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (isActive) HudColors.accent.copy(alpha = 0.3f)
-                        else Color.Transparent
-                    )
-                    .border(
-                        if (isActive) 1.5.dp else 0.5.dp,
-                        if (isActive) HudColors.accent else HudColors.borderLight,
-                        CircleShape
-                    )
-                    .pointerInput(stop) {
-                        detectTapGestures {
-                            onZoomChanged(stop)
-                            onCollapse()
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = formatZoom(stop),
-                    color = if (isActive) HudColors.accent else Color.White,
-                    fontSize = if (isActive) 11.sp else 9.sp,
-                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
         }
-    }
-}
 
-private fun isNearStop(current: Float, stop: Float): Boolean {
-    val tolerance = if (stop < 1f) 0.15f else stop * 0.15f
-    return kotlin.math.abs(current - stop) < tolerance
+        val indicatorAngle = startAngle + totalSweep * fraction
+        val indicatorRad = Math.toRadians(indicatorAngle.toDouble())
+        drawCircle(
+            color = HudColors.accent,
+            radius = 5f,
+            center = Offset(
+                center.x + radius * kotlin.math.cos(indicatorRad).toFloat(),
+                center.y + radius * kotlin.math.sin(indicatorRad).toFloat()
+            )
+        )
+    }
 }
 
 private fun formatZoom(ratio: Float): String = when {
     ratio < 1f -> "%.1f".format(ratio)
     ratio == ratio.toInt().toFloat() -> "${ratio.toInt()}x"
-    else -> "%.1f".format(ratio)
+    else -> "%.1fx".format(ratio)
 }
