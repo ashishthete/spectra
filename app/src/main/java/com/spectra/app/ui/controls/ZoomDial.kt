@@ -39,7 +39,7 @@ import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.roundToInt
 
-private val LENS_STOPS = floatArrayOf(0.6f, 1f, 2f, 5f, 10f)
+private val LENS_STOPS = floatArrayOf(1f, 2f, 5f, 10f)
 
 @Composable
 fun ZoomDial(
@@ -75,7 +75,7 @@ fun ZoomDial(
                             change.consume()
                             // Drag up = zoom in, drag down = zoom out
                             dragAccumulator += -dragAmount.y
-                            val logMin = ln(0.6f)
+                            val logMin = ln(1f)
                             val logMax = ln(maxZoomRatio)
                             val logRange = logMax - logMin
                             val logStep = (dragAccumulator / trackHeightPx) * logRange
@@ -92,7 +92,7 @@ fun ZoomDial(
                     detectTapGestures { offset ->
                         // Tap on track to set zoom by position
                         val fraction = 1f - (offset.y / size.height).coerceIn(0f, 1f)
-                        val logMin = ln(0.6f)
+                        val logMin = ln(1f)
                         val logMax = ln(maxZoomRatio)
                         val logNew = logMin + fraction * (logMax - logMin)
                         onZoomChanged(exp(logNew))
@@ -120,7 +120,7 @@ fun ZoomDial(
         }
 
         // Current zoom indicator — floating label next to the track
-        val logMin = ln(0.6f)
+        val logMin = ln(1f)
         val logMax = ln(maxZoomRatio)
         val fraction = if (logMax > logMin) (ln(zoomRatio) - logMin) / (logMax - logMin) else 0f
         val offsetY = ((1f - fraction) - 0.5f) * (trackHeightDp.value - 40f)
@@ -164,7 +164,7 @@ private fun LensStopButton(
 
     Box(
         modifier = Modifier
-            .size(36.dp)
+            .size(46.dp)
             .clip(CircleShape)
             .background(bgColor)
             .then(
@@ -180,7 +180,7 @@ private fun LensStopButton(
         Text(
             text = label,
             color = textColor,
-            fontSize = 10.sp,
+            fontSize = 13.sp,
             fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
             fontFamily = FontFamily.Monospace
         )
