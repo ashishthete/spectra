@@ -789,7 +789,7 @@ class CameraViewModel @Inject constructor(
         }
         try {
             val state = _hudState.value
-            val isHdr = state.isHdrActive && !state.isFrontCamera
+            val isHdr = false // HDR bracket produces dark/green results — disabled until debugged
             if (isHdr) {
                 try {
                     Log.d("CameraViewModel", "HDR capture path")
