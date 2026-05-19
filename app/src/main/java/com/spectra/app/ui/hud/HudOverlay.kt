@@ -168,8 +168,8 @@ fun HudOverlay(
                 PitchIndicator(
                     pitchAngle = state.pitchAngle,
                     modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 12.dp)
+                        .align(Alignment.CenterStart)
+                        .padding(start = 12.dp)
                 )
 
                 ZoomBar(

@@ -148,45 +148,20 @@ fun CaptureControls(
                 )
             }
 
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .border(1.5.dp, HudColors.borderLight, CircleShape)
+                    .clickable { onFlipCamera() },
+                contentAlignment = Alignment.Center
             ) {
-                if (!isFrontCamera) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .border(1.5.dp, HudColors.borderLight, CircleShape)
-                            .clickable { onLensCycle() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = activeLens.zoomLabel.uppercase(),
-                            color = HudColors.accent,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.sp,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            letterSpacing = 1.sp
-                        )
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .size(if (isFrontCamera) 40.dp else 36.dp)
-                        .clip(CircleShape)
-                        .border(1.5.dp, HudColors.borderLight, CircleShape)
-                        .clickable { onFlipCamera() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Flip camera",
-                        tint = HudColors.accent,
-                        modifier = Modifier.size(if (isFrontCamera) 22.dp else 18.dp)
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Flip camera",
+                    tint = HudColors.accent,
+                    modifier = Modifier.size(24.dp)
+                )
             }
         }
     }
