@@ -310,7 +310,7 @@ fun ViewfinderScreen(
             },
             modifier = Modifier
                 .align(Alignment.CenterEnd)
-                .padding(end = 8.dp)
+                .padding(end = 4.dp)
         )
 
         Column(
