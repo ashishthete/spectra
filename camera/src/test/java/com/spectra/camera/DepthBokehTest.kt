@@ -71,4 +71,26 @@ class DepthBokehTest {
             assertThat((result[i] shr 16) and 0xFF).isWithin(2).of(100)
         }
     }
+
+    @Test
+    fun `applyDepthBokeh with depth gradient produces valid output`() {
+        val w = 32; val h = 32; val n = w * h
+        val pixels = IntArray(n) { i ->
+            val x = i % w
+            val v = (x * 255 / w).coerceIn(0, 255)
+            (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+        }
+        val depthMap = FloatArray(n) { i ->
+            val x = i % w; val y = i / w
+            val cx = w / 2f; val cy = h / 2f
+            val dist = kotlin.math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy))
+            (dist / (w / 2f)).coerceIn(0f, 1f)
+        }
+        val result = bokeh.applyDepthBokeh(pixels, depthMap, w, h, w, h, focusDepth = 0.0f, maxBlurRadius = 10f)
+        assertThat(result).hasLength(n)
+        for (i in result.indices) {
+            val r = (result[i] shr 16) and 0xFF
+            assertThat(r).isIn(0..255)
+        }
+    }
 }
