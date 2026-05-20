@@ -31,9 +31,12 @@ class PalmGestureDetector @Inject constructor(
     val fistDetected: StateFlow<Boolean> = _fistDetected.asStateFlow()
 
     private var palmStartMs = 0L
+    private var lastPalmMs = 0L
     private var fistStartMs = 0L
+    private var lastFistMs = 0L
     private val palmRequiredMs = 5000L
     private val fistRequiredMs = 2000L
+    private val gapToleranceMs = 1000L
 
     fun initialize() {
         try {
@@ -42,9 +45,9 @@ class PalmGestureDetector @Inject constructor(
                 .build()
             val options = HandLandmarker.HandLandmarkerOptions.builder()
                 .setBaseOptions(baseOptions)
-                .setMinHandDetectionConfidence(0.6f)
-                .setMinHandPresenceConfidence(0.6f)
-                .setMinTrackingConfidence(0.6f)
+                .setMinHandDetectionConfidence(0.5f)
+                .setMinHandPresenceConfidence(0.5f)
+                .setMinTrackingConfidence(0.5f)
                 .setNumHands(1)
                 .setRunningMode(RunningMode.IMAGE)
                 .build()
@@ -70,29 +73,45 @@ class PalmGestureDetector @Inject constructor(
                 val extended = countExtendedFingers(landmarks)
                 if (extended >= 4) {
                     if (palmStartMs == 0L) palmStartMs = now
+                    lastPalmMs = now
                     fistStartMs = 0L
+                    lastFistMs = 0L
                     _fistDetected.value = false
                     if (now - palmStartMs >= palmRequiredMs) {
                         _palmDetected.value = true
                     }
                 } else if (extended <= 1) {
                     if (fistStartMs == 0L) fistStartMs = now
+                    lastFistMs = now
                     palmStartMs = 0L
+                    lastPalmMs = 0L
                     _palmDetected.value = false
                     if (now - fistStartMs >= fistRequiredMs) {
                         _fistDetected.value = true
                     }
                 } else {
-                    palmStartMs = 0L
-                    fistStartMs = 0L
-                    _palmDetected.value = false
-                    _fistDetected.value = false
+                    if (palmStartMs > 0 && now - lastPalmMs > gapToleranceMs) {
+                        palmStartMs = 0L
+                        lastPalmMs = 0L
+                        _palmDetected.value = false
+                    }
+                    if (fistStartMs > 0 && now - lastFistMs > gapToleranceMs) {
+                        fistStartMs = 0L
+                        lastFistMs = 0L
+                        _fistDetected.value = false
+                    }
                 }
             } else {
-                palmStartMs = 0L
-                fistStartMs = 0L
-                _palmDetected.value = false
-                _fistDetected.value = false
+                if (palmStartMs > 0 && now - lastPalmMs > gapToleranceMs) {
+                    palmStartMs = 0L
+                    lastPalmMs = 0L
+                    _palmDetected.value = false
+                }
+                if (fistStartMs > 0 && now - lastFistMs > gapToleranceMs) {
+                    fistStartMs = 0L
+                    lastFistMs = 0L
+                    _fistDetected.value = false
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Hand detection failed", e)
@@ -132,7 +151,9 @@ class PalmGestureDetector @Inject constructor(
 
     fun resetDetection() {
         palmStartMs = 0L
+        lastPalmMs = 0L
         fistStartMs = 0L
+        lastFistMs = 0L
         _palmDetected.value = false
         _fistDetected.value = false
     }

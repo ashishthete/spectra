@@ -251,11 +251,7 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch {
             palmGestureDetector.palmDetected.collect { detected ->
                 if (detected && _hudState.value.palmGestureEnabled && palmCountdownJob == null && !_captureInProgress.value) {
-                    if (_hudState.value.mode == CameraMode.VIDEO && _hudState.value.isRecording) {
-                        palmGestureDetector.resetDetection()
-                    } else {
-                        startPalmCountdown()
-                    }
+                    startPalmCountdown()
                 }
             }
         }
