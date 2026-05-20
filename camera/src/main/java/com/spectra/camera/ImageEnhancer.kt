@@ -21,7 +21,11 @@ object ImageEnhancer {
         val warmthShift: Float = 0f,
         val brightnessBoost: Float = 0f,
         val shadowProtection: Float = 0.3f,
-        val hslStrength: Float = 0f
+        val hslStrength: Float = 0f,
+        val tintShift: Float = 0f,
+        val globalSatReduction: Float = 0f,
+        val grainAmount: Float = 0f,
+        val grainSize: Int = 25
     ) {
         companion object {
             fun forPreset(preset: String, iso: Int = 100, sceneContrast: Float = 0f): EnhanceParams {
@@ -33,6 +37,9 @@ object ImageEnhancer {
                         contrastCurveStrength = 0.25f,
                         shadowProtection = 0.3f,
                         hslStrength = 0.4f,
+                        tintShift = -7f,
+                        globalSatReduction = 0.12f,
+                        grainAmount = 18f,
                         iso = iso
                     )
                     "PORTRAIT", "PORT" -> EnhanceParams(
@@ -43,6 +50,9 @@ object ImageEnhancer {
                         warmthShift = 0.06f,
                         shadowProtection = 0.25f,
                         hslStrength = 0.6f,
+                        tintShift = -8f,
+                        globalSatReduction = 0.12f,
+                        grainAmount = 15f,
                         iso = iso
                     )
                     "NIGHT", "NGHT" -> EnhanceParams(
@@ -53,6 +63,9 @@ object ImageEnhancer {
                         warmthShift = -0.04f,
                         shadowProtection = 0.5f,
                         hslStrength = 0.3f,
+                        tintShift = -5f,
+                        globalSatReduction = 0.08f,
+                        grainAmount = 10f,
                         iso = iso
                     )
                     "FOOD" -> EnhanceParams(
@@ -64,6 +77,9 @@ object ImageEnhancer {
                         brightnessBoost = 0.12f,
                         shadowProtection = 0.2f,
                         hslStrength = 0.5f,
+                        tintShift = -5f,
+                        globalSatReduction = 0.06f,
+                        grainAmount = 12f,
                         iso = iso
                     )
                     "LANDSCAPE", "LNDS" -> EnhanceParams(
@@ -74,6 +90,9 @@ object ImageEnhancer {
                         warmthShift = -0.03f,
                         shadowProtection = 0.4f,
                         hslStrength = 0.5f,
+                        tintShift = -7f,
+                        globalSatReduction = 0.10f,
+                        grainAmount = 18f,
                         iso = iso
                     )
                     "ACTION", "ACTN" -> EnhanceParams(
@@ -83,6 +102,8 @@ object ImageEnhancer {
                         contrastCurveStrength = 0.20f,
                         shadowProtection = 0.2f,
                         hslStrength = 0.3f,
+                        tintShift = -6f,
+                        globalSatReduction = 0.08f,
                         iso = iso
                     )
                     "MACRO", "MCRO" -> EnhanceParams(
@@ -92,6 +113,8 @@ object ImageEnhancer {
                         contrastCurveStrength = 0.20f,
                         shadowProtection = 0.2f,
                         hslStrength = 0.4f,
+                        tintShift = -6f,
+                        globalSatReduction = 0.08f,
                         iso = iso
                     )
                     else -> EnhanceParams(iso = iso)
@@ -194,6 +217,10 @@ object ImageEnhancer {
             applyWarmthShift(pixels, params.warmthShift * strength)
         }
 
+        if (strength > 0f && params.tintShift != 0f) {
+            applyTintCorrection(pixels, params.tintShift)
+        }
+
         if (strength > 0f && params.contrastCurveStrength > 0f) {
             applyLuminanceSCurve(pixels, params.contrastCurveStrength * strength)
         }
@@ -204,6 +231,14 @@ object ImageEnhancer {
 
         if (strength > 0f && params.hslStrength > 0f) {
             applySonyCinetoneHsl(pixels, params.hslStrength * strength)
+        }
+
+        if (strength > 0f && params.globalSatReduction > 0f) {
+            applyGlobalSatReduction(pixels, params.globalSatReduction * strength)
+        }
+
+        if (params.grainAmount > 0f) {
+            applyFilmGrain(pixels, w, h, params.grainAmount, params.grainSize)
         }
 
         val result = bitmap.copy(Bitmap.Config.ARGB_8888, true)
@@ -589,6 +624,71 @@ object ImageEnhancer {
                 (r.coerceIn(0f, 255f).toInt() shl 16) or
                 (g.coerceIn(0f, 255f).toInt() shl 8) or
                 b.coerceIn(0f, 255f).toInt()
+        }
+    }
+
+    private fun applyTintCorrection(pixels: IntArray, tintShift: Float) {
+        val greenGain = 1f - tintShift * 0.002f
+        val magentaGain = 1f + tintShift * 0.001f
+        for (i in pixels.indices) {
+            val a = (pixels[i] shr 24) and 0xFF
+            val r = (((pixels[i] shr 16) and 0xFF) * magentaGain).coerceIn(0f, 255f).toInt()
+            val g = (((pixels[i] shr 8) and 0xFF) * greenGain).coerceIn(0f, 255f).toInt()
+            val b = ((pixels[i] and 0xFF) * magentaGain).coerceIn(0f, 255f).toInt()
+            pixels[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
+        }
+    }
+
+    private fun applyGlobalSatReduction(pixels: IntArray, reduction: Float) {
+        val factor = 1f - reduction
+        for (i in pixels.indices) {
+            val a = (pixels[i] shr 24) and 0xFF
+            val r = ((pixels[i] shr 16) and 0xFF).toFloat()
+            val g = ((pixels[i] shr 8) and 0xFF).toFloat()
+            val b = (pixels[i] and 0xFF).toFloat()
+            val luma = 0.299f * r + 0.587f * g + 0.114f * b
+            val nr = luma + (r - luma) * factor
+            val ng = luma + (g - luma) * factor
+            val nb = luma + (b - luma) * factor
+            pixels[i] = (a shl 24) or
+                (nr.coerceIn(0f, 255f).toInt() shl 16) or
+                (ng.coerceIn(0f, 255f).toInt() shl 8) or
+                nb.coerceIn(0f, 255f).toInt()
+        }
+    }
+
+    private fun applyFilmGrain(pixels: IntArray, w: Int, h: Int, amount: Float, size: Int) {
+        val strength = amount * 0.5f
+        val cellSize = max(1, size / 10)
+        val gridW = (w + cellSize - 1) / cellSize + 1
+        val gridH = (h + cellSize - 1) / cellSize + 1
+        val grid = FloatArray(gridW * gridH)
+        var seed = System.nanoTime()
+        for (j in grid.indices) {
+            seed = seed * 6364136223846793005L + 1442695040888963407L
+            grid[j] = ((seed ushr 33).toInt() % 1000) / 500f - 1f
+        }
+        for (y in 0 until h) {
+            val gy = y.toFloat() / cellSize
+            val gy0 = gy.toInt().coerceIn(0, gridH - 2)
+            val fy = gy - gy0
+            for (x in 0 until w) {
+                val gx = x.toFloat() / cellSize
+                val gx0 = gx.toInt().coerceIn(0, gridW - 2)
+                val fx = gx - gx0
+                val v00 = grid[gy0 * gridW + gx0]
+                val v10 = grid[gy0 * gridW + gx0 + 1]
+                val v01 = grid[(gy0 + 1) * gridW + gx0]
+                val v11 = grid[(gy0 + 1) * gridW + gx0 + 1]
+                val noise = (v00 * (1 - fx) * (1 - fy) + v10 * fx * (1 - fy) +
+                    v01 * (1 - fx) * fy + v11 * fx * fy) * strength
+                val i = y * w + x
+                val a = (pixels[i] shr 24) and 0xFF
+                val nr = (((pixels[i] shr 16) and 0xFF) + noise).coerceIn(0f, 255f).toInt()
+                val ng = (((pixels[i] shr 8) and 0xFF) + noise).coerceIn(0f, 255f).toInt()
+                val nb = ((pixels[i] and 0xFF) + noise).coerceIn(0f, 255f).toInt()
+                pixels[i] = (a shl 24) or (nr shl 16) or (ng shl 8) or nb
+            }
         }
     }
 
