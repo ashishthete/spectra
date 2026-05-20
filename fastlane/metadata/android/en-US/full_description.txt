@@ -1,0 +1,43 @@
+SPECTRA is an intelligent camera app that uses AI to analyze every scene and automatically dial in professional-grade settings — so you get stunning photos without touching a single slider.
+
+SMART SCENE DETECTION
+SPECTRA identifies what you're shooting — portraits, landscapes, food, macro, night, action — and applies the optimal ISO, shutter speed, and white balance in real-time. No more blown highlights or murky shadows.
+
+AI COACHING
+Real-time coaching tips appear in the viewfinder: "Hold steady", "Backlit subject — tap face to brighten", "Step back and use 3x — face will look more natural". SPECTRA teaches you photography while you shoot.
+
+PROFESSIONAL PROCESSING PIPELINE
+Every photo passes through a multi-stage pipeline:
+- Bilateral noise reduction in YCbCr with ISO-adaptive strength
+- Guided filter tone mapping for natural HDR
+- Lab-space skin tone correction for accurate, diverse skin rendering
+- Laplacian pyramid edge-aware sharpening
+- Scene-adaptive filmic tone curves
+- Mertens exposure fusion for high-contrast scenes
+
+PORTRAIT MODE
+Depth-aware bokeh with ML-based depth estimation. Subject isolation, depth-selective warmth, and computational portrait lighting (Studio, Contour, Stage, High-Key modes).
+
+MULTI-FRAME CAPTURE
+Adaptive frame count based on stability, motion, and ISO. Burst merge with sub-pixel alignment for maximum detail and minimum noise.
+
+PRO MODE
+Full manual control: ISO, shutter speed, white balance, focus distance. Live histogram, focus peaking, zebra stripes, false color exposure, and waveform monitor.
+
+SMART REVIEW
+Side-by-side comparison of original vs. AI-enhanced photo. Quality scoring ensures AI never makes your photo worse — if it does, the original is kept automatically.
+
+TIERED EXPERIENCE
+- Everyday: Simple, jargon-free interface. "Cleaned up grain" instead of "Bilateral NR".
+- Creator: Photography terminology. Practical tips.
+- Pro: Full technical details. All manual controls unlocked.
+
+ZERO SHUTTER LAG
+Pre-buffered frames mean you never miss the decisive moment.
+
+PRIVACY
+All AI processing happens on-device. No photos are uploaded to any server. Your photos stay yours.
+
+REQUIREMENTS
+- Samsung Galaxy S24 Ultra (optimized for S24 hardware)
+- Android 14+

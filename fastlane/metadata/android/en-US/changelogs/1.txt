@@ -1,0 +1,11 @@
+Initial release of SPECTRA Camera.
+
+- AI scene detection with 8 presets (Auto, Portrait, Landscape, Night, Food, Action, Macro, Pro)
+- Real-time coaching with adaptive hints
+- Multi-frame HDR with Mertens fusion
+- Depth-aware portrait bokeh
+- Lab-space skin tone correction
+- Edge-aware Laplacian sharpening
+- Smart review with original vs. AI comparison
+- Pro mode with histogram, focus peaking, zebras
+- Zero shutter lag capture
