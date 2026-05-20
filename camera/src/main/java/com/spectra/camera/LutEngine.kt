@@ -172,9 +172,7 @@ object LutEngine {
         return ((curved * 0.5f + 0.5f) * 255f).coerceIn(0f, 255f)
     }
 
-    /**
-     * Lift blacks: remap [0..255] to [liftTo..255].
-     */
+    // Lift blacks: remap 0..255 to liftTo..255
     private fun liftBlacks(value: Float, liftTo: Float): Float {
         return liftTo + value * (255f - liftTo) / 255f
     }
