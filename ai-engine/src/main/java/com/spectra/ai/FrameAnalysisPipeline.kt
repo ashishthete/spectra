@@ -25,10 +25,11 @@ class FrameAnalysisPipeline @Inject constructor(
     private val distanceEstimator: DistanceEstimator,
     val decisionEngine: DecisionEngine,
     private val presetEngine: PresetEngine,
-    private val coachingEngine: CoachingEngine,
+    val coachingEngine: CoachingEngine,
     private val compositionAnalyzer: CompositionAnalyzer,
     val cloudCoachingManager: CloudCoachingManager,
-    val faceDetector: FaceDetectorWrapper
+    val faceDetector: FaceDetectorWrapper,
+    val skinToneClassifier: SkinToneClassifier
 ) {
     private val _analysis = MutableStateFlow(SceneAnalysis())
     val analysis: StateFlow<SceneAnalysis> = _analysis.asStateFlow()
@@ -79,7 +80,8 @@ class FrameAnalysisPipeline @Inject constructor(
         colorTemperature: Int = 5500,
         gyroAngularVelocity: Float = 0f,
         gyroConsistentFrames: Int = 0,
-        rollAngleDegrees: Float = 0f
+        rollAngleDegrees: Float = 0f,
+        ambientLux: Float = -1f
     ) {
         val currentFaceData = faceDetector.faceData.value
         val (sceneType, confidence) = sceneClassifier.classify(bitmap, isFrontCamera, currentFaceData)
@@ -114,6 +116,33 @@ class FrameAnalysisPipeline @Inject constructor(
 
         val distance = distanceEstimator.estimateFromFocusDistance(focusDistanceDiopters)
 
+        if (currentFaceData.hasFaces) {
+            val updatedFaces = currentFaceData.faces.map { face ->
+                val cheekLeft = (face.bounds.left * sW).toInt().coerceIn(0, sW - 1)
+                val cheekTop = ((face.bounds.top + (face.bounds.height() * 0.45f)) * sH).toInt().coerceIn(0, sH - 1)
+                val cheekRight = (face.bounds.right * sW).toInt().coerceIn(0, sW)
+                val cheekBottom = ((face.bounds.top + (face.bounds.height() * 0.75f)) * sH).toInt().coerceIn(0, sH)
+                val cW = (cheekRight - cheekLeft).coerceAtLeast(1)
+                val cH = (cheekBottom - cheekTop).coerceAtLeast(1)
+                val regionPixels = IntArray(cW * cH)
+                for (ry in 0 until cH) {
+                    for (rx in 0 until cW) {
+                        val sx = cheekLeft + rx; val sy = cheekTop + ry
+                        if (sx in 0 until sW && sy in 0 until sH) {
+                            regionPixels[ry * cW + rx] = pixels[sy * sW + sx]
+                        }
+                    }
+                }
+                val result = skinToneClassifier.classifyFromPixels(regionPixels)
+                face.copy(
+                    skinToneShade = result.tone.shade,
+                    skinToneAwbShiftK = result.awbShiftK,
+                    skinToneEvComp = result.evCompensation
+                )
+            }
+            faceDetector.updateSkinTones(updatedFaces)
+        }
+
         val faceRects = if (currentFaceData.hasFaces) {
             currentFaceData.faces.map { it.bounds }
         } else {
@@ -125,6 +154,13 @@ class FrameAnalysisPipeline @Inject constructor(
         )
         _compositionResult.value = compositionResult
 
+        val meteringResult = SemanticMeteringEngine.computeSemanticMetering(
+            pixels, sW, sH,
+            subjectMask = null,
+            skyMask = null,
+            faceRegions = faceRects
+        )
+
         val sceneAnalysis = SceneAnalysis(
             sceneType = sceneType,
             confidence = confidence,
@@ -132,7 +168,10 @@ class FrameAnalysisPipeline @Inject constructor(
             motionLevel = motion,
             motionSource = motionSource,
             distanceRange = distance,
-            faceData = currentFaceData
+            faceData = currentFaceData,
+            ambientLux = ambientLux,
+            semanticEvCompensation = meteringResult.targetExposureCompensation,
+            hasSkyHighlights = meteringResult.hasSkyHighlights
         )
         _analysis.value = sceneAnalysis
 

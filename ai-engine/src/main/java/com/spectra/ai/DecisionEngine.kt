@@ -2,6 +2,7 @@ package com.spectra.ai
 
 import com.spectra.ai.model.*
 import com.spectra.core.model.CameraSettings
+import com.spectra.core.model.CameraConstraints
 import com.spectra.core.model.LensId
 import com.spectra.core.model.SceneType
 import javax.inject.Inject
@@ -31,8 +32,8 @@ class DecisionEngine @Inject constructor() {
                 reason = "ACTION — fast shutter priority"
             )
             com.spectra.core.model.CameraPreset.NIGHT -> ExposureStrategy(
-                useSemiAuto = true, minShutterDenom = 15, maxIso = 1600,
-                reason = "NIGHT — long exposure, controlled ISO"
+                useSemiAuto = true, minShutterDenom = 8, maxIso = 6400,
+                reason = "NIGHT — long exposure, higher ISO ceiling"
             )
             com.spectra.core.model.CameraPreset.LANDSCAPE -> ExposureStrategy(
                 useSemiAuto = true, minShutterDenom = 125, maxIso = 200,
@@ -111,10 +112,39 @@ class DecisionEngine @Inject constructor() {
             scores[LensId.TELEPHOTO_5X] = (scores[LensId.TELEPHOTO_5X] ?: 0f) + 0.2f
         }
 
+        applyLuxPenalty(scores, analysis)
+
         val recommended = scores.maxByOrNull { it.value }?.key ?: LensId.MAIN
-        val reason = "${analysis.sceneType.label} · ${analysis.distanceRange.label}"
+        val luxSuffix = if (analysis.ambientLux >= 0f) " · ${analysis.ambientLux.toInt()} lux" else ""
+        val reason = "${analysis.sceneType.label} · ${analysis.distanceRange.label}$luxSuffix"
 
         return LensRecommendation(recommended, scores, reason)
+    }
+
+    private fun applyLuxPenalty(scores: MutableMap<LensId, Float>, analysis: SceneAnalysis) {
+        val isLowLight = analysis.lighting == LightingCondition.LOW_LIGHT ||
+                analysis.lighting == LightingCondition.BLUE_HOUR ||
+                (analysis.ambientLux in 0f..50f)
+
+        val isDimIndoor = analysis.lighting == LightingCondition.ARTIFICIAL ||
+                (analysis.ambientLux in 50f..200f)
+
+        if (isLowLight) {
+            // Telephoto lenses have smaller apertures: 3X f/2.4, 5X f/3.4
+            // Main lens f/1.7 gathers 2x more light than 3X, 4x more than 5X
+            scores[LensId.TELEPHOTO_5X] = (scores[LensId.TELEPHOTO_5X] ?: 0f) * 0.2f
+            scores[LensId.TELEPHOTO_3X] = (scores[LensId.TELEPHOTO_3X] ?: 0f) * 0.4f
+            scores[LensId.MAIN] = (scores[LensId.MAIN] ?: 0f) + 0.3f
+        } else if (isDimIndoor) {
+            scores[LensId.TELEPHOTO_5X] = (scores[LensId.TELEPHOTO_5X] ?: 0f) * 0.5f
+            scores[LensId.TELEPHOTO_3X] = (scores[LensId.TELEPHOTO_3X] ?: 0f) * 0.7f
+            scores[LensId.MAIN] = (scores[LensId.MAIN] ?: 0f) + 0.15f
+        }
+
+        if (analysis.ambientLux > 10000f) {
+            scores[LensId.TELEPHOTO_3X] = (scores[LensId.TELEPHOTO_3X] ?: 0f) + 0.1f
+            scores[LensId.TELEPHOTO_5X] = (scores[LensId.TELEPHOTO_5X] ?: 0f) + 0.1f
+        }
     }
 
     fun optimizeSettings(analysis: SceneAnalysis): SettingsProfile {
@@ -122,8 +152,67 @@ class DecisionEngine @Inject constructor() {
         val adjusted = adjustForMotion(baseSettings, analysis.motionLevel)
         val distanceAdjusted = adjustForDistance(adjusted, analysis.distanceRange)
 
+        val constraints = getConstraints(distanceAdjusted, analysis.sceneType, analysis.motionLevel)
+
         val reason = "${analysis.sceneType.label} · ${analysis.lighting.label}"
-        return SettingsProfile(distanceAdjusted, reason)
+        return SettingsProfile(distanceAdjusted, reason, constraints)
+    }
+
+    /**
+     * Whether HDR bracketing should be used given the current motion level.
+     * SHAKING (FAST/VERY_FAST) causes bracket frames to misalign, producing
+     * ghosting artifacts — fall back to single-frame capture instead.
+     */
+    fun shouldUseHdr(motionLevel: MotionLevel): Boolean {
+        return motionLevel.ordinal < MotionLevel.FAST.ordinal
+    }
+
+    /**
+     * Whether night mode long-exposure is viable.
+     * STATIONARY (STATIC) allows longer exposures; anything more than SLOW
+     * needs faster shutter to prevent motion blur.
+     */
+    fun allowNightLongExposure(motionLevel: MotionLevel): Boolean {
+        return motionLevel.ordinal <= MotionLevel.SLOW.ordinal
+    }
+
+    private fun getConstraints(settings: CameraSettings, scene: SceneType, motionLevel: MotionLevel = MotionLevel.STATIC): CameraConstraints {
+        val baseMinShutter = when (scene) {
+            SceneType.ACTION, SceneType.PET -> 500
+            SceneType.PORTRAIT -> 125
+            SceneType.LANDSCAPE -> 60
+            SceneType.NIGHT -> 8
+            else -> 60
+        }
+        // Raise shutter floor when device is shaking to avoid motion blur
+        val motionMinShutter = when (motionLevel) {
+            MotionLevel.VERY_FAST -> 1000
+            MotionLevel.FAST -> 500
+            MotionLevel.MODERATE -> 250
+            else -> baseMinShutter
+        }
+        val minShutter = maxOf(baseMinShutter, motionMinShutter)
+
+        // STATIONARY on night scenes: allow slower shutter floor
+        val finalMinShutter = if (scene == SceneType.NIGHT && motionLevel == MotionLevel.STATIC) {
+            baseMinShutter  // keep the scene-based floor (1/8s)
+        } else {
+            minShutter
+        }
+
+        val maxIso = when (scene) {
+            SceneType.ACTION -> 3200
+            SceneType.NIGHT -> 6400
+            SceneType.LANDSCAPE -> 800
+            else -> 1600
+        }
+        return CameraConstraints(
+            minShutterSpeedDenominator = finalMinShutter,
+            maxShutterSpeedDenominator = 32000,
+            minIso = 50,
+            maxIso = maxIso,
+            evTargetOffset = settings.exposureCompensation
+        )
     }
 
     private fun getBaseSettings(scene: SceneType, lighting: LightingCondition): CameraSettings {
@@ -241,11 +330,15 @@ class DecisionEngine @Inject constructor() {
 
     private fun nightSettings(lighting: LightingCondition) = when (lighting) {
         LightingCondition.ARTIFICIAL -> CameraSettings(
-            iso = 800, shutterSpeedDenominator = 30,
+            iso = 1600, shutterSpeedDenominator = 30,
             whiteBalanceKelvin = 3500, exposureCompensation = 0.3f
         )
+        LightingCondition.LOW_LIGHT -> CameraSettings(
+            iso = 6400, shutterSpeedDenominator = 8,
+            whiteBalanceKelvin = 3800, exposureCompensation = 0.3f
+        )
         else -> CameraSettings(
-            iso = 1600, shutterSpeedDenominator = 15,
+            iso = 3200, shutterSpeedDenominator = 15,
             whiteBalanceKelvin = 3800, exposureCompensation = 0f
         )
     }

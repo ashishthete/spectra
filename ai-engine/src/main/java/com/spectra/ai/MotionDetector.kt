@@ -27,6 +27,13 @@ class MotionDetector @Inject constructor() {
     private val frameBuffer = ArrayDeque<FloatArray>(3)
     private val downsampleSize = 32
 
+    /** Sliding window of recent gyro angular velocity samples (rad/s). */
+    private val gyroWindow = ArrayDeque<Float>(GYRO_WINDOW_SIZE)
+
+    /** Motion level derived purely from gyroscope data. */
+    var gyroMotionLevel: MotionLevel = MotionLevel.STATIC
+        private set
+
     var currentMotion: MotionLevel = MotionLevel.STATIC
         private set
 
@@ -41,7 +48,9 @@ class MotionDetector @Inject constructor() {
         frameBuffer.addLast(downsampled)
         if (frameBuffer.size > 3) frameBuffer.removeFirst()
         lastFrameDiff = computeFrameDiff()
-        currentMotion = classifyMotionLevel(lastFrameDiff)
+        val frameDiffMotion = classifyMotionLevel(lastFrameDiff)
+        // Fuse frame-diff and gyro: take the more agitated of the two
+        currentMotion = maxOf(frameDiffMotion, gyroMotionLevel)
         currentMotionSource = classifyMotionSource(lastGyroVelocity, lastFrameDiff, lastConsistentFrames)
     }
 
@@ -60,7 +69,39 @@ class MotionDetector @Inject constructor() {
     fun updateGyro(angularVelocity: Float, consistentFrames: Int) {
         lastGyroVelocity = angularVelocity
         lastConsistentFrames = consistentFrames
+
+        // Maintain sliding window of gyro samples for smoothed classification
+        gyroWindow.addLast(angularVelocity)
+        if (gyroWindow.size > GYRO_WINDOW_SIZE) gyroWindow.removeFirst()
+        gyroMotionLevel = classifyGyroMotion()
+
+        // Fuse gyro-based and frame-diff-based motion: take the more agitated of the two
+        currentMotion = maxOf(currentMotion, gyroMotionLevel)
         currentMotionSource = classifyMotionSource(lastGyroVelocity, lastFrameDiff, lastConsistentFrames)
+    }
+
+    /**
+     * Classify device motion from the sliding window of gyro angular velocity.
+     * Uses the mean of the last [GYRO_WINDOW_SIZE] samples (10) to smooth noise.
+     *
+     * Thresholds (rad/s):
+     *  - STATIONARY (STATIC):  < 0.02  — tripod or stable surface
+     *  - STABLE     (SLOW):    < 0.10  — handheld, steady
+     *  - MOVING     (MODERATE):< 0.50  — walking, panning
+     *  - SHAKING    (FAST):    >= 0.50 — running, vehicle
+     */
+    private fun classifyGyroMotion(): MotionLevel {
+        if (gyroWindow.isEmpty()) return MotionLevel.STATIC
+        var sum = 0f
+        for (v in gyroWindow) sum += v
+        val meanVelocity = sum / gyroWindow.size
+        return when {
+            meanVelocity < 0.02f -> MotionLevel.STATIC
+            meanVelocity < 0.10f -> MotionLevel.SLOW
+            meanVelocity < 0.50f -> MotionLevel.MODERATE
+            meanVelocity < 1.00f -> MotionLevel.FAST
+            else -> MotionLevel.VERY_FAST
+        }
     }
 
     private fun computeFrameDiff(): Float {
@@ -122,10 +163,17 @@ class MotionDetector @Inject constructor() {
 
     fun reset() {
         frameBuffer.clear()
+        gyroWindow.clear()
         currentMotion = MotionLevel.STATIC
+        gyroMotionLevel = MotionLevel.STATIC
         currentMotionSource = MotionSource.STABLE
         lastGyroVelocity = 0f
         lastConsistentFrames = 0
         lastFrameDiff = 0f
+    }
+
+    companion object {
+        /** Number of gyro samples in the sliding window for smoothed classification. */
+        const val GYRO_WINDOW_SIZE = 10
     }
 }

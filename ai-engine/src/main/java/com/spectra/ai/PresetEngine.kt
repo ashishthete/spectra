@@ -16,25 +16,40 @@ class PresetEngine @Inject constructor() {
     fun buildProfile(preset: CameraPreset, analysis: SceneAnalysis): PresetProfile {
         val isNight = analysis.lighting == LightingCondition.LOW_LIGHT ||
                 analysis.lighting == LightingCondition.ARTIFICIAL
-        val settings = getSettings(preset, analysis.lighting, analysis.motionLevel)
+        val baseSettings = getSettings(preset, analysis.lighting, analysis.motionLevel)
+        val settings = if (analysis.semanticEvCompensation != 0f) {
+            baseSettings.copy(
+                exposureCompensation = (baseSettings.exposureCompensation + analysis.semanticEvCompensation).coerceIn(-3f, 3f)
+            )
+        } else baseSettings
         val processing = getProcessing(preset, isNight)
 
         val faceCount = analysis.faceData.faceCount
         val isGroup = preset == CameraPreset.PORTRAIT && faceCount >= 3
 
+        // Motion-aware HDR: skip multi-frame HDR when shaking (FAST/VERY_FAST)
+        // because bracket frames will misalign and produce ghosting
+        val isShaking = analysis.motionLevel.ordinal >= MotionLevel.FAST.ordinal
+        val hdrAllowed = !isShaking
+
+        // Motion-aware night stacking: only allow multi-frame stacking when
+        // device is stationary or barely moving (tripod / stable surface)
+        val nightStackAllowed = analysis.motionLevel.ordinal <= MotionLevel.SLOW.ordinal
+
+        val isTrueScene = preset == CameraPreset.TRUE_SCENE
         return PresetProfile(
             preset = preset,
             settings = settings,
             processing = processing,
-            facePriority = preset in FACE_PRESETS,
-            eyeAf = preset in EYE_AF_PRESETS && !isGroup,
-            blinkDetection = isGroup,
-            burstEnabled = preset in BURST_PRESETS,
-            motionStabilization = preset in STABILIZE_PRESETS,
-            focusTracking = preset in TRACKING_PRESETS,
-            multiFrameHdr = preset !in NO_HDR_PRESETS && !isNight,
-            multiFrameStacking = preset == CameraPreset.NIGHT,
-            backgroundBlur = preset in BLUR_PRESETS
+            facePriority = !isTrueScene && preset in FACE_PRESETS,
+            eyeAf = !isTrueScene && preset in EYE_AF_PRESETS && !isGroup,
+            blinkDetection = !isTrueScene && isGroup,
+            burstEnabled = !isTrueScene && preset in BURST_PRESETS,
+            motionStabilization = !isTrueScene && preset in STABILIZE_PRESETS,
+            focusTracking = !isTrueScene && preset in TRACKING_PRESETS,
+            multiFrameHdr = !isTrueScene && preset !in NO_HDR_PRESETS && !isNight && hdrAllowed,
+            multiFrameStacking = !isTrueScene && preset == CameraPreset.NIGHT && nightStackAllowed,
+            backgroundBlur = !isTrueScene && preset in BLUR_PRESETS
         )
     }
 
@@ -48,6 +63,7 @@ class PresetEngine @Inject constructor() {
             CameraPreset.ACTION -> actionSettings(light)
             CameraPreset.MACRO -> macroSettings(light)
             CameraPreset.PRO -> CameraSettings()
+            CameraPreset.TRUE_SCENE -> autoSettings(light)
         }
         return adjustForMotion(base, motion, preset)
     }
@@ -184,22 +200,26 @@ class PresetEngine @Inject constructor() {
             CameraPreset.PORTRAIT -> ProcessingParams(
                 contrast = 42, saturation = 46, sharpness = 38,
                 noiseReduction = if (isNight) 55 else 35,
-                skinToneProcessing = 25, highlightProtection = 58
+                skinToneProcessing = 25, highlightProtection = 58,
+                colorGradingLut = "CINEMATIC"
             )
             CameraPreset.NIGHT -> ProcessingParams(
                 contrast = 45, saturation = 40, sharpness = 35,
-                noiseReduction = 70, hdrStrength = 25,
-                shadowRecovery = 40
+                noiseReduction = 45, hdrStrength = 25,
+                shadowRecovery = 40,
+                colorGradingLut = "MOODY"
             )
             CameraPreset.FOOD -> ProcessingParams(
                 contrast = 52, saturation = 56, sharpness = 60,
                 noiseReduction = 32, highlightProtection = 60,
-                hdrStrength = 38
+                hdrStrength = 38,
+                colorGradingLut = "VIVID"
             )
             CameraPreset.LANDSCAPE -> ProcessingParams(
                 contrast = 52, saturation = 54, sharpness = 55,
                 noiseReduction = 30, hdrStrength = 55,
-                highlightProtection = 68, shadowRecovery = 50
+                highlightProtection = 68, shadowRecovery = 50,
+                colorGradingLut = "VIVID"
             )
             CameraPreset.ACTION -> ProcessingParams(
                 contrast = 52, saturation = 53, sharpness = 52,
@@ -211,6 +231,7 @@ class PresetEngine @Inject constructor() {
                 noiseReduction = 25
             )
             CameraPreset.PRO -> ProcessingParams.NATURAL
+            CameraPreset.TRUE_SCENE -> ProcessingParams.NATURAL
         }
     }
 
@@ -232,6 +253,17 @@ class PresetEngine @Inject constructor() {
                 exposureCompensation = settings.exposureCompensation,
                 focusDistance = settings.focusDistance
             )
+            // STATIONARY on night preset: allow even slower shutter + lower ISO
+            // for maximum quality long-exposure capture on a tripod
+            MotionLevel.STATIC -> if (preset == CameraPreset.NIGHT) {
+                CameraSettings.clamped(
+                    iso = minOf(settings.iso, 400),
+                    shutterSpeedDenominator = minOf(settings.shutterSpeedDenominator, 4),
+                    whiteBalanceKelvin = settings.whiteBalanceKelvin,
+                    exposureCompensation = settings.exposureCompensation,
+                    focusDistance = settings.focusDistance
+                )
+            } else settings
             else -> settings
         }
     }

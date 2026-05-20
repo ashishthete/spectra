@@ -11,6 +11,9 @@ data class SceneAnalysis(
     val motionSource: MotionDetector.MotionSource = MotionDetector.MotionSource.STABLE,
     val distanceRange: DistanceRange = DistanceRange.INFINITY,
     val faceData: FaceData = FaceData.EMPTY,
+    val ambientLux: Float = -1f,
+    val semanticEvCompensation: Float = 0f,
+    val hasSkyHighlights: Boolean = false,
     val timestampMs: Long = System.currentTimeMillis()
 ) {
     val isStable: Boolean get() = confidence >= 0.35f
