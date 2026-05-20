@@ -126,6 +126,9 @@ data class HudState(
     val shadowClipFraction: Float = 0f,
 
     val cropSuggestions: List<CropSuggestionData> = emptyList(),
+
+    val palmGestureEnabled: Boolean = false,
+    val palmCountdown: Int = 0,
 ) {
     val isLowLight: Boolean get() = actualIso > 800 || actualShutterSpeedNs > 33_000_000L
 

@@ -18,6 +18,7 @@ truth = "1.4.4"
 mockk = "1.13.13"
 coil = "2.7.0"
 mlkitFaceDetection = "16.1.7"
+mediapipe = "0.10.14"
 
 [libraries]
 core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -58,6 +59,7 @@ mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
 coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
 coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 mlkit-face-detection = { module = "com.google.mlkit:face-detection", version.ref = "mlkitFaceDetection" }
+mediapipe-tasks-vision = { module = "com.google.mediapipe:tasks-vision", version.ref = "mediapipe" }
 coroutines-play-services = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-play-services", version.ref = "coroutines" }
 
 [plugins]

@@ -30,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorMatrix
 import android.graphics.ColorMatrix as AndroidColorMatrix
 import androidx.compose.ui.input.pointer.pointerInput
@@ -305,10 +306,12 @@ fun ViewfinderScreen(
             timerSeconds = hudState.timerSeconds,
             aspectRatio = hudState.aspectRatio,
             megapixels = hudState.cameraMegapixels,
+            palmGestureEnabled = hudState.palmGestureEnabled,
             onFlashToggle = { viewModel.toggleFlash() },
             onTimerToggle = { viewModel.toggleTimer() },
             onAspectToggle = { viewModel.toggleAspectRatio() },
             onMegapixelToggle = { viewModel.cycleMegapixels() },
+            onPalmGestureToggle = { viewModel.togglePalmGesture() },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 12.dp)
@@ -337,6 +340,43 @@ fun ViewfinderScreen(
                     .align(Alignment.Center)
                     .background(HudColors.surfaceGlass, RoundedCornerShape(20.dp))
                     .padding(horizontal = 32.dp, vertical = 16.dp)
+            )
+        }
+
+        if (hudState.palmCountdown > 0) {
+            LaunchedEffect(hudState.palmCountdown) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            }
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "✋",
+                    fontSize = 36.sp,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                Text(
+                    text = "${hudState.palmCountdown}",
+                    color = Color(0xFF4CAF50),
+                    fontSize = 80.sp,
+                    fontWeight = FontWeight.Light,
+                    fontFamily = FontFamily.SansSerif,
+                    modifier = Modifier
+                        .background(HudColors.surfaceGlass, RoundedCornerShape(20.dp))
+                        .padding(horizontal = 36.dp, vertical = 12.dp)
+                )
+            }
+        }
+
+        if (hudState.palmGestureEnabled && hudState.palmCountdown == 0) {
+            Text(
+                text = "✋ Palm to capture",
+                color = HudColors.textSecondary,
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 70.dp)
             )
         }
 

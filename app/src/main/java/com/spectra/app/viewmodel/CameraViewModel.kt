@@ -5,6 +5,7 @@ import androidx.camera.core.ImageCapture
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.spectra.ai.FrameAnalysisPipeline
+import com.spectra.ai.PalmGestureDetector
 import com.spectra.ai.model.PhotoTip
 import com.spectra.ai.tips.TipsRepository
 import com.spectra.app.settings.SettingsStore
@@ -54,7 +55,8 @@ class CameraViewModel @Inject constructor(
     private val settingsStore: SettingsStore,
     private val levelSensor: LevelSensor,
     private val locationProvider: LocationProvider,
-    private val thermalPolicy: ThermalPolicy
+    private val thermalPolicy: ThermalPolicy,
+    private val palmGestureDetector: PalmGestureDetector
 ) : ViewModel() {
 
     private val _hudState = MutableStateFlow(HudState())
@@ -93,9 +95,12 @@ class CameraViewModel @Inject constructor(
     private var lastGoldenMomentCaptureMs: Long = 0L
     private val rackFocusEngine = com.spectra.camera.RackFocusEngine()
     private var lastAppliedSemiAuto: Boolean = false
+    private var palmCountdownJob: Job? = null
+    private var palmDetectionFrameCount = 0
 
     init {
         pipeline.initialize()
+        palmGestureDetector.initialize()
         levelSensor.start()
         locationProvider.startUpdates()
 
@@ -232,6 +237,20 @@ class CameraViewModel @Inject constructor(
                 }
                 if (meta.mode == CameraMode.PRO && (meta.focusPeakingEnabled || meta.zebraEnabled || meta.falseColorEnabled)) {
                     computeProOverlays(bitmap, meta.focusPeakingEnabled, meta.zebraEnabled, meta.falseColorEnabled)
+                }
+                if (meta.palmGestureEnabled && palmCountdownJob == null && !_captureInProgress.value) {
+                    palmDetectionFrameCount++
+                    if (palmDetectionFrameCount % 3 == 0) {
+                        palmGestureDetector.detect(bitmap)
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            palmGestureDetector.palmDetected.collect { detected ->
+                if (detected && _hudState.value.palmGestureEnabled && palmCountdownJob == null && !_captureInProgress.value) {
+                    startPalmCountdown()
                 }
             }
         }
@@ -678,6 +697,30 @@ class CameraViewModel @Inject constructor(
             else -> 0
         }
         _hudState.update { it.copy(timerSeconds = next) }
+    }
+
+    fun togglePalmGesture() {
+        val enabled = !_hudState.value.palmGestureEnabled
+        _hudState.update { it.copy(palmGestureEnabled = enabled, palmCountdown = 0) }
+        if (!enabled) {
+            palmCountdownJob?.cancel()
+            palmCountdownJob = null
+            palmGestureDetector.resetDetection()
+        }
+    }
+
+    private fun startPalmCountdown() {
+        palmCountdownJob?.cancel()
+        palmCountdownJob = viewModelScope.launch {
+            for (i in 3 downTo 1) {
+                _hudState.update { it.copy(palmCountdown = i) }
+                delay(1000)
+            }
+            _hudState.update { it.copy(palmCountdown = 0) }
+            palmGestureDetector.resetDetection()
+            capturePhoto()
+            palmCountdownJob = null
+        }
     }
 
     fun toggleAspectRatio() {
@@ -1610,6 +1653,7 @@ class CameraViewModel @Inject constructor(
         levelSensor.stop()
         locationProvider.stopUpdates()
         pipeline.release()
+        palmGestureDetector.release()
         rackFocusEngine.release()
         cameraController.release()
         captureManager.releaseDepthModel()

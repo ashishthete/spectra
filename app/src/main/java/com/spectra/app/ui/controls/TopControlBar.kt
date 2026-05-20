@@ -29,10 +29,12 @@ fun TopControlBar(
     timerSeconds: Int,
     aspectRatio: AspectRatio,
     megapixels: Int = 12,
+    palmGestureEnabled: Boolean = false,
     onFlashToggle: () -> Unit,
     onTimerToggle: () -> Unit,
     onAspectToggle: () -> Unit,
     onMegapixelToggle: () -> Unit = {},
+    onPalmGestureToggle: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -68,6 +70,13 @@ fun TopControlBar(
             label = "MP",
             isActive = megapixels > 12,
             onClick = onMegapixelToggle
+        )
+
+        TopButton(
+            icon = "✋",
+            label = "Palm",
+            isActive = palmGestureEnabled,
+            onClick = onPalmGestureToggle
         )
     }
 }
