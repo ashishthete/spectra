@@ -28,14 +28,19 @@ object ImageEnhancer {
         val grainSize: Int = 25
     ) {
         companion object {
-            fun forPreset(preset: String, iso: Int = 100, sceneContrast: Float = 0f): EnhanceParams {
+            fun forPreset(preset: String, iso: Int = 100, sceneContrast: Float = 0f, isFrontCamera: Boolean = false): EnhanceParams {
+                val frontBoost = if (isFrontCamera) 0.15f else 0f
+                val indoorBoost = if (iso >= 400) 0.08f else 0f
+                val extraBrightness = frontBoost + indoorBoost
+                val extraShadow = if (isFrontCamera) 0.15f else 0f
                 return when (preset) {
                     "AUTO" -> EnhanceParams(
                         baseCompression = if (sceneContrast > 0.25f) 1.5f else 1.35f,
                         detailBoost = 1.15f,
                         vibranceAmount = 0.15f,
                         contrastCurveStrength = 0.25f,
-                        shadowProtection = 0.3f,
+                        shadowProtection = 0.3f + extraShadow,
+                        brightnessBoost = extraBrightness,
                         hslStrength = 0.4f,
                         tintShift = -7f,
                         globalSatReduction = 0.12f,
@@ -48,7 +53,8 @@ object ImageEnhancer {
                         vibranceAmount = 0.08f,
                         contrastCurveStrength = 0.15f,
                         warmthShift = 0.06f,
-                        shadowProtection = 0.25f,
+                        shadowProtection = 0.25f + extraShadow,
+                        brightnessBoost = extraBrightness,
                         hslStrength = 0.6f,
                         tintShift = -8f,
                         globalSatReduction = 0.12f,
@@ -570,13 +576,13 @@ object ImageEnhancer {
 
             when {
                 hue < 15f || hue >= 345f -> {
-                    hueShift = 8f * strength
-                    satScale = 1f - 0.10f * strength
+                    hueShift = 3f * strength
+                    satScale = 1f - 0.06f * strength
                 }
                 hue in 15f..40f -> {
-                    hueShift = -4f * strength
-                    satScale = 1f - 0.08f * strength
-                    lumShift = 12f * strength
+                    hueShift = -8f * strength
+                    satScale = 1f - 0.05f * strength
+                    lumShift = 14f * strength
                 }
                 hue in 40f..70f -> {
                     hueShift = -12f * strength

@@ -672,7 +672,7 @@ class CaptureManager @Inject constructor(
                     } catch (_: OutOfMemoryError) { System.gc() }
                 }
 
-                val params = ImageEnhancer.EnhanceParams.forPreset(preset, captureIso, sceneContrast)
+                val params = ImageEnhancer.EnhanceParams.forPreset(preset, captureIso, sceneContrast, isFrontCamera)
                 val enhanced = ImageEnhancer.enhance(original, params)
                 original.recycle()
 

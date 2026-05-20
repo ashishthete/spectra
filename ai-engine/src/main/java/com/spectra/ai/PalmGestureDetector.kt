@@ -71,7 +71,8 @@ class PalmGestureDetector @Inject constructor(
             if (result.landmarks().isNotEmpty()) {
                 val landmarks = result.landmarks()[0]
                 val extended = countExtendedFingers(landmarks)
-                if (extended >= 4) {
+                val spread = fingerSpreadRatio(landmarks)
+                if (extended >= 5 && spread > 0.25f) {
                     if (palmStartMs == 0L) palmStartMs = now
                     lastPalmMs = now
                     fistStartMs = 0L
@@ -130,7 +131,7 @@ class PalmGestureDetector @Inject constructor(
 
         val tips = intArrayOf(4, 8, 12, 16, 20)
         val bases = intArrayOf(2, 5, 9, 13, 17)
-        val thresholds = floatArrayOf(1.1f, 1.2f, 1.2f, 1.2f, 1.2f)
+        val thresholds = floatArrayOf(1.2f, 1.4f, 1.4f, 1.4f, 1.4f)
 
         var extendedCount = 0
         for (i in tips.indices) {
@@ -141,6 +142,19 @@ class PalmGestureDetector @Inject constructor(
             if (tipDist > baseDist * thresholds[i]) extendedCount++
         }
         return extendedCount
+    }
+
+    private fun fingerSpreadRatio(landmarks: List<NormalizedLandmark>): Float {
+        if (landmarks.size < 21) return 0f
+        val tips = intArrayOf(8, 12, 16, 20)
+        var totalSpread = 0f
+        for (i in 0 until tips.size - 1) {
+            val a = landmarks[tips[i]]
+            val b = landmarks[tips[i + 1]]
+            totalSpread += dist(a.x(), a.y(), b.x(), b.y())
+        }
+        val palmSize = dist(landmarks[0].x(), landmarks[0].y(), landmarks[9].x(), landmarks[9].y())
+        return if (palmSize > 0.01f) totalSpread / palmSize else 0f
     }
 
     private fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {
