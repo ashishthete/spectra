@@ -1132,7 +1132,7 @@ class CameraViewModel @Inject constructor(
                 lastCapturedUri = result.bestOriginalUri,
                 showCaptureFlash = false,
                 isCapturing = false,
-                showSmartReview = false,
+                showSmartReview = true,
                 bestOriginalUri = result.bestOriginalUri,
                 aiEnhancedUri = null,
                 isEnhancing = true,

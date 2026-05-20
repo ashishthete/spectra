@@ -196,10 +196,12 @@ class CaptureManager @Inject constructor(
 
         if (frameCount <= 1) {
             val zslFrame = zslBuffer.getLatest()
-            val frame = if (zslFrame != null && zslFrame.jpegBytes != null && zslFrame.jpegBytes.isNotEmpty()) {
-                Log.d("CaptureManager", "ZSL: using buffered frame (age=${(System.nanoTime() - zslFrame.timestampNs) / 1_000_000}ms)")
+            val zslAgeMs = if (zslFrame != null) (System.nanoTime() - zslFrame.timestampNs) / 1_000_000 else Long.MAX_VALUE
+            val frame = if (zslFrame != null && zslFrame.jpegBytes != null && zslFrame.jpegBytes.isNotEmpty() && zslAgeMs in 0..1000) {
+                Log.d("CaptureManager", "ZSL: using buffered frame (age=${zslAgeMs}ms)")
                 Pair(zslFrame.jpegBytes, 0)
             } else {
+                if (zslFrame != null) Log.d("CaptureManager", "ZSL: skipping stale frame (age=${zslAgeMs}ms), using live capture")
                 captureInMemory(imageCapture)
             }
             val uri = saveJpegToMediaStore(frame.first, frame.second)
@@ -1178,7 +1180,7 @@ class CaptureManager @Inject constructor(
                         val ts = image.imageInfo.timestamp
                         image.close()
                         zslBuffer.push(ZslRingBuffer.ZslFrame(
-                            timestampNs = ts, iso = 0, exposureNs = 0,
+                            timestampNs = System.nanoTime(), iso = 0, exposureNs = 0,
                             jpegBytes = bytes, yuvBytes = null, width = 0, height = 0
                         ))
                         continuation.resume(Pair(bytes, rotation))
