@@ -1,0 +1,2 @@
+json_key_file("play-store-key.json")
+package_name("com.spectra.app")
