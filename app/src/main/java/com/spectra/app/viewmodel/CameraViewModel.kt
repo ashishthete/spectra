@@ -718,7 +718,11 @@ class CameraViewModel @Inject constructor(
             }
             _hudState.update { it.copy(palmCountdown = 0) }
             palmGestureDetector.resetDetection()
-            capturePhoto()
+            if (_hudState.value.mode == CameraMode.VIDEO) {
+                toggleRecording()
+            } else {
+                capturePhoto()
+            }
             palmCountdownJob = null
         }
     }
@@ -748,7 +752,11 @@ class CameraViewModel @Inject constructor(
 
     fun cycleMegapixels() {
         val current = _hudState.value.cameraMegapixels
-        val next = if (current >= 50) 12 else 50
+        val next = when {
+            current >= 200 -> 12
+            current >= 50 -> 200
+            else -> 50
+        }
         _hudState.update { it.copy(cameraMegapixels = next) }
         cameraController.setCaptureResolution(next)
     }
@@ -1340,10 +1348,15 @@ class CameraViewModel @Inject constructor(
             _hudState.update { it.copy(isRecording = true, recordingDurationMs = 0L) }
             recordingTimerJob = viewModelScope.launch {
                 var videoCoachingCounter = 0
+                var lastDisplayedSecond = -1L
                 while (true) {
                     delay(100)
                     val elapsed = System.currentTimeMillis() - recordingStartTimeMs
-                    _hudState.update { it.copy(recordingDurationMs = elapsed) }
+                    val currentSecond = elapsed / 1000
+                    if (currentSecond != lastDisplayedSecond) {
+                        lastDisplayedSecond = currentSecond
+                        _hudState.update { it.copy(recordingDurationMs = elapsed) }
+                    }
                     videoCoachingCounter++
                     if (videoCoachingCounter % 20 == 0) {
                         val analysis = pipeline.analysis.value

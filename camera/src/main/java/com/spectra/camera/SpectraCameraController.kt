@@ -360,13 +360,14 @@ class SpectraCameraController @Inject constructor(
             capabilityMatrix.selectCaptureSize(cameraId ?: "0", captureMegapixels)
         } catch (_: Exception) {
             when (captureMegapixels) {
+                200 -> Size(16320, 12240)
                 50 -> Size(8160, 6120)
                 else -> Size(4032, 3024)
             }
         }
         Log.d("SpectraCameraController", "Selected capture size: ${captureSize.width}x${captureSize.height} for ${captureMegapixels}MP")
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setCaptureMode(if (captureMegapixels > 12) ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setTargetResolution(captureSize)
             .setTargetRotation(rotation)
             .setFlashMode(ImageCapture.FLASH_MODE_OFF)
