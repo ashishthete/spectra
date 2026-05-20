@@ -21,6 +21,7 @@ import android.util.Log
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
+import com.spectra.core.model.CaptureRecipe
 import com.spectra.core.model.PhotoStyle
 import com.spectra.core.model.ProcessingParams
 import com.spectra.core.model.SceneType
@@ -49,13 +50,53 @@ class CaptureManager @Inject constructor(
     private val hdrProcessor = HdrProcessor()
     private var depthEstimator: DepthEstimator? = null
     private val depthBokeh = DepthBokeh()
+    private val focusStacker = FocusStacker()
+    val zslBuffer = ZslRingBuffer(capacity = 5)
+    private var neuralDenoiser: NeuralDenoiser? = null
+    private var gpuContext: com.spectra.camera.gpu.GpuContext? = null
+
+    fun initGpu() {
+        if (gpuContext != null) return
+        val ctx = com.spectra.camera.gpu.GpuContext()
+        if (ctx.init()) {
+            gpuContext = ctx
+            hdrProcessor.setGpuContext(ctx)
+            com.spectra.camera.gpu.GpuMertensFusion.loadShader(context.assets)
+            NoiseReducer.initGpu()
+            Log.d("CaptureManager", "GPU compute context ready, Mertens shader loaded")
+        }
+    }
+
+    fun releaseGpu() {
+        hdrProcessor.setGpuContext(null)
+        NoiseReducer.releaseGpu()
+        gpuContext?.release()
+        gpuContext = null
+    }
 
     fun initDepthModel() {
         val estimator = DepthEstimator(context)
         if (estimator.initialize()) {
             depthEstimator = estimator
             Log.d("CaptureManager", "Depth model loaded")
+        } else {
+            Log.w("CaptureManager", "Depth model unavailable — portrait bokeh will use gradient fallback")
         }
+    }
+
+    fun initNeuralDenoiser() {
+        val denoiser = NeuralDenoiser()
+        if (denoiser.init(context.assets)) {
+            neuralDenoiser = denoiser
+            Log.d("CaptureManager", "Neural denoiser loaded")
+        } else {
+            Log.w("CaptureManager", "Neural denoiser unavailable — using bilateral filter for noise reduction")
+        }
+    }
+
+    fun releaseNeuralDenoiser() {
+        neuralDenoiser?.release()
+        neuralDenoiser = null
     }
 
     fun releaseDepthModel() {
@@ -90,6 +131,33 @@ class CaptureManager @Inject constructor(
         val allFrames: List<Pair<ByteArray, Int>>
     )
 
+    data class CaptureResultMetadata(
+        val actualFrameCount: Int,
+        val didBurstMerge: Boolean,
+        val didHdr: Boolean,
+        val hdrFrameCount: Int = 0,
+        val didFocusStack: Boolean = false,
+        val didNeuralDenoise: Boolean = false,
+        val fallbackReason: String? = null,
+        val focusSweepPositions: List<Float> = emptyList()
+    )
+
+    data class HdrCaptureResult(
+        val uri: String,
+        val metadata: CaptureResultMetadata
+    )
+
+    data class ProcessingResult(
+        val uri: String,
+        val appliedStages: List<String> = emptyList(),
+        val didNeuralDenoise: Boolean = false
+    )
+
+    data class SmartCaptureResultWithMeta(
+        val result: SmartCaptureResult,
+        val metadata: CaptureResultMetadata
+    )
+
     suspend fun captureSmartPhoto(
         imageCapture: ImageCapture,
         beautyLevel: Int = 0,
@@ -98,57 +166,163 @@ class CaptureManager @Inject constructor(
         isHdr: Boolean = false,
         faceRects: List<RectF> = emptyList(),
         processing: ProcessingParams = ProcessingParams(),
-        currentIso: Int = 0
-    ): SmartCaptureResult {
+        currentIso: Int = 0,
+        recipe: CaptureRecipe? = null,
+        isStable: Boolean = false,
+        gyroMotion: Float = 0f,
+        lux: Float = Float.MAX_VALUE,
+        thermalMaxFrames: Int = Int.MAX_VALUE,
+        hasFaceMotion: Boolean = false,
+        highContrast: Boolean = false,
+        setFocusDistance: (suspend (Float) -> Unit)? = null,
+        restoreAutoFocus: (suspend () -> Unit)? = null
+    ): SmartCaptureResultWithMeta {
         val frameCount = when {
+            recipe != null -> recipe.resolveFrameCount(
+                isStable = isStable,
+                gyroMotion = gyroMotion,
+                iso = currentIso,
+                lux = lux,
+                thermalMaxFrames = thermalMaxFrames,
+                hasFaceMotion = hasFaceMotion,
+                highContrast = highContrast
+            ).coerceAtLeast(1)
             isFrontCamera -> 1
             currentIso > 1200 -> 3
             else -> 1
         }
+        val shouldBurstMerge = recipe?.useBurstMerge ?: (currentIso > 1200)
+        Log.d("CaptureManager", "Resolved frame count: $frameCount (base=${recipe?.baseFrameCount}, max=${recipe?.maxFrameCount}, stable=$isStable, gyro=$gyroMotion, ISO=$currentIso)")
 
         if (frameCount <= 1) {
-            val frame = captureInMemory(imageCapture)
+            val zslFrame = zslBuffer.getLatest()
+            val frame = if (zslFrame != null && zslFrame.jpegBytes != null && zslFrame.jpegBytes.isNotEmpty()) {
+                Log.d("CaptureManager", "ZSL: using buffered frame (age=${(System.nanoTime() - zslFrame.timestampNs) / 1_000_000}ms)")
+                Pair(zslFrame.jpegBytes, 0)
+            } else {
+                captureInMemory(imageCapture)
+            }
             val uri = saveJpegToMediaStore(frame.first, frame.second)
-            Log.d("CaptureManager", "Single-frame capture saved: ${frame.first.size} bytes, ISO=$currentIso")
-            return SmartCaptureResult(bestOriginalUri = uri, allFrames = listOf(frame))
+            Log.d("CaptureManager", "Single-frame capture saved: ${frame.first.size} bytes, ISO=$currentIso, recipe=${recipe?.preset}")
+            return SmartCaptureResultWithMeta(
+                result = SmartCaptureResult(bestOriginalUri = uri, allFrames = listOf(frame)),
+                metadata = CaptureResultMetadata(actualFrameCount = 1, didBurstMerge = false, didHdr = false)
+            )
         }
 
+        val targetFrames = frameCount
+        val isMacroSweep = recipe?.preset == com.spectra.core.model.CameraPreset.MACRO
+                && targetFrames > 1 && setFocusDistance != null
+        val focusSweep = if (isMacroSweep) {
+            generateMacroFocusPositions(targetFrames)
+        } else emptyList()
+
         val frames = mutableListOf<Pair<ByteArray, Int>>()
-        for (i in 0 until frameCount) {
-            try {
-                frames.add(captureInMemory(imageCapture))
-                if (i < frameCount - 1) delay(60)
-            } catch (e: Exception) {
-                Log.w("CaptureManager", "Smart capture frame $i failed", e)
+        try {
+            for (i in 0 until targetFrames) {
+                try {
+                    if (isMacroSweep && i < focusSweep.size) {
+                        setFocusDistance!!(focusSweep[i])
+                        delay(150)
+                    }
+                    frames.add(captureInMemory(imageCapture))
+                    if (i < targetFrames - 1 && !isMacroSweep) delay(60)
+                } catch (e: Exception) {
+                    Log.w("CaptureManager", "Smart capture frame $i failed", e)
+                }
             }
+        } finally {
+            if (isMacroSweep) {
+                restoreAutoFocus?.invoke()
+            }
+        }
+        if (isMacroSweep) {
+            Log.d("CaptureManager", "Macro focus sweep: ${focusSweep.size} positions, ${frames.size} captured")
         }
         if (frames.isEmpty()) {
             val frame = captureInMemory(imageCapture)
             val uri = saveJpegToMediaStore(frame.first, frame.second)
-            return SmartCaptureResult(bestOriginalUri = uri, allFrames = listOf(frame))
+            return SmartCaptureResultWithMeta(
+                result = SmartCaptureResult(bestOriginalUri = uri, allFrames = listOf(frame)),
+                metadata = CaptureResultMetadata(actualFrameCount = 1, didBurstMerge = false, didHdr = false, fallbackReason = "all burst frames failed")
+            )
         }
 
-        val merged = try {
-            withContext(Dispatchers.Default) { burstMerge(frames) }
-        } catch (oom: OutOfMemoryError) {
-            Log.w("CaptureManager", "OOM during burst merge, falling back to best single frame")
-            System.gc()
+        val isMacroStack = recipe?.preset == com.spectra.core.model.CameraPreset.MACRO && frames.size > 1
+        val didMerge = shouldBurstMerge && frames.size > 1
+        var didFocusStack = false
+
+        val merged = if (isMacroStack) {
+            try {
+                val stacked = withContext(Dispatchers.Default) { focusStackFrames(frames) }
+                didFocusStack = true
+                Log.d("CaptureManager", "Macro focus stack: ${frames.size} frames stacked")
+                stacked
+            } catch (e: Exception) {
+                Log.w("CaptureManager", "Focus stack failed, falling back to burst merge", e)
+                if (didMerge) {
+                    try { withContext(Dispatchers.Default) { burstMerge(frames) } }
+                    catch (_: OutOfMemoryError) { System.gc(); frames.maxBy { (jpeg, _) -> jpeg.size } }
+                } else frames.maxBy { (jpeg, _) -> jpeg.size }
+            }
+        } else if (didMerge) {
+            try {
+                withContext(Dispatchers.Default) { burstMerge(frames) }
+            } catch (oom: OutOfMemoryError) {
+                Log.w("CaptureManager", "OOM during burst merge, falling back to best single frame")
+                System.gc()
+                frames.maxBy { (jpeg, _) -> jpeg.size }
+            }
+        } else {
             frames.maxBy { (jpeg, _) -> jpeg.size }
         }
         val uri = saveJpegToMediaStore(merged.first, merged.second)
-        Log.d("CaptureManager", "Multi-frame capture: ${frames.size} frames merged, ISO=$currentIso")
-        return SmartCaptureResult(bestOriginalUri = uri, allFrames = frames)
+        Log.d("CaptureManager", "Capture: ${frames.size} frames, merged=$didMerge, focusStack=$didFocusStack, recipe=${recipe?.preset}, ISO=$currentIso")
+        return SmartCaptureResultWithMeta(
+            result = SmartCaptureResult(bestOriginalUri = uri, allFrames = frames),
+            metadata = CaptureResultMetadata(
+                actualFrameCount = frames.size, didBurstMerge = didMerge, didHdr = false,
+                didFocusStack = didFocusStack,
+                focusSweepPositions = if (isMacroSweep) focusSweep.take(frames.size) else emptyList()
+            )
+        )
+    }
+
+    private fun generateMacroFocusPositions(frameCount: Int): List<Float> {
+        val nearM = 0.04f
+        val farM = 0.15f
+        if (frameCount <= 1) return listOf((nearM + farM) / 2f)
+        return (0 until frameCount).map { i ->
+            nearM + (farM - nearM) * i / (frameCount - 1)
+        }
+    }
+
+    private fun focusStackFrames(frames: List<Pair<ByteArray, Int>>): Pair<ByteArray, Int> {
+        val bitmaps = frames.map { (jpeg, _) ->
+            BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
+        }
+        val w = bitmaps[0].width
+        val h = bitmaps[0].height
+        val pixelArrays = bitmaps.map { bmp ->
+            val pixels = IntArray(w * h)
+            bmp.getPixels(pixels, 0, w, 0, 0, w, h)
+            bmp.recycle()
+            pixels
+        }
+
+        val stacked = focusStacker.stack(pixelArrays, w, h)
+        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        result.setPixels(stacked, 0, w, 0, 0, w, h)
+
+        val stream = java.io.ByteArrayOutputStream()
+        result.compress(Bitmap.CompressFormat.JPEG, 97, stream)
+        result.recycle()
+        return Pair(stream.toByteArray(), frames[0].second)
     }
 
     private fun burstMerge(frames: List<Pair<ByteArray, Int>>): Pair<ByteArray, Int> {
         val refIdx = pickSharpestIdx(frames)
         val rotation = frames[refIdx].second
-
-        val thumbOpts = BitmapFactory.Options().apply { inSampleSize = 8 }
-        val refThumb = BitmapFactory.decodeByteArray(
-            frames[refIdx].first, 0, frames[refIdx].first.size, thumbOpts
-        )
-        val refGray = refThumb?.let { toGrayscale(it).also { _ -> refThumb.recycle() } }
 
         val refBitmap = BitmapFactory.decodeByteArray(
             frames[refIdx].first, 0, frames[refIdx].first.size
@@ -157,30 +331,37 @@ class CaptureManager @Inject constructor(
         val h = refBitmap.height
         val n = w * h
 
-        val avgPixels = IntArray(n)
-        refBitmap.getPixels(avgPixels, 0, w, 0, 0, w, h)
+        val refPixels = IntArray(n)
+        refBitmap.getPixels(refPixels, 0, w, 0, 0, w, h)
         refBitmap.recycle()
-        var mergedCount = 1
+
+        val refGray = IntArray(n)
+        for (i in 0 until n) {
+            val r = (refPixels[i] shr 16) and 0xFF
+            val g = (refPixels[i] shr 8) and 0xFF
+            val b = refPixels[i] and 0xFF
+            refGray[i] = (r * 77 + g * 150 + b * 29) shr 8
+        }
+
+        val tileSize = 32
+        val tilesX = w / tileSize
+        val tilesY = h / tileSize
+
+        val sumR = FloatArray(n)
+        val sumG = FloatArray(n)
+        val sumB = FloatArray(n)
+        val weightSum = FloatArray(n)
+        for (i in 0 until n) {
+            sumR[i] = ((refPixels[i] shr 16) and 0xFF).toFloat()
+            sumG[i] = ((refPixels[i] shr 8) and 0xFF).toFloat()
+            sumB[i] = (refPixels[i] and 0xFF).toFloat()
+            weightSum[i] = 1f
+        }
 
         val framePixels = IntArray(n)
+        val frameGray = IntArray(n)
         for (i in frames.indices) {
             if (i == refIdx) continue
-
-            var dx = 0
-            var dy = 0
-            if (refGray != null) {
-                val altThumb = BitmapFactory.decodeByteArray(
-                    frames[i].first, 0, frames[i].first.size, thumbOpts
-                )
-                if (altThumb != null) {
-                    val altGray = toGrayscale(altThumb)
-                    altThumb.recycle()
-                    val shift = alignGlobal(refGray, altGray)
-                    dx = shift.first * 8
-                    dy = shift.second * 8
-                    Log.d("CaptureManager", "Frame $i alignment: dx=$dx, dy=$dy")
-                }
-            }
 
             val bitmap = BitmapFactory.decodeByteArray(
                 frames[i].first, 0, frames[i].first.size
@@ -192,27 +373,63 @@ class CaptureManager @Inject constructor(
             bitmap.getPixels(framePixels, 0, w, 0, 0, w, h)
             bitmap.recycle()
 
-            val newCount = mergedCount + 1
+            for (j in 0 until n) {
+                val r = (framePixels[j] shr 16) and 0xFF
+                val g = (framePixels[j] shr 8) and 0xFF
+                val b = framePixels[j] and 0xFF
+                frameGray[j] = (r * 77 + g * 150 + b * 29) shr 8
+            }
+
+            val tileOffsets = Array(max(tilesY, 1)) { IntArray(max(tilesX, 1) * 2) }
+            val tileConfidence = Array(max(tilesY, 1)) { FloatArray(max(tilesX, 1)) }
+
+            for (ty in 0 until max(tilesY, 1)) {
+                for (tx in 0 until max(tilesX, 1)) {
+                    val result = alignTile(refGray, frameGray, w, h, tx * tileSize, ty * tileSize, tileSize)
+                    tileOffsets[ty][tx * 2] = result.first
+                    tileOffsets[ty][tx * 2 + 1] = result.second
+                    tileConfidence[ty][tx] = result.third
+                }
+            }
+
+            // Build per-pixel motion mask: mark pixels where aligned difference exceeds threshold
+            val motionThreshold = 30
             for (row in 0 until h) {
                 for (col in 0 until w) {
+                    val tx = min(col / tileSize, max(tilesX - 1, 0))
+                    val ty = min(row / tileSize, max(tilesY - 1, 0))
+                    val conf = tileConfidence[ty][tx]
+                    if (conf < 0.3f) continue
+
+                    val dx = tileOffsets[ty][tx * 2]
+                    val dy = tileOffsets[ty][tx * 2 + 1]
                     val srcRow = row + dy
                     val srcCol = col + dx
                     if (srcRow < 0 || srcRow >= h || srcCol < 0 || srcCol >= w) continue
+
                     val j = row * w + col
                     val srcJ = srcRow * w + srcCol
-                    val aR = (avgPixels[j] shr 16) and 0xFF
-                    val aG = (avgPixels[j] shr 8) and 0xFF
-                    val aB = avgPixels[j] and 0xFF
-                    val fR = (framePixels[srcJ] shr 16) and 0xFF
-                    val fG = (framePixels[srcJ] shr 8) and 0xFF
-                    val fB = framePixels[srcJ] and 0xFF
-                    val r = (aR * mergedCount + fR) / newCount
-                    val g = (aG * mergedCount + fG) / newCount
-                    val b = (aB * mergedCount + fB) / newCount
-                    avgPixels[j] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+
+                    // Per-pixel motion test: skip if aligned pixel differs too much from reference
+                    val lumDiff = abs(refGray[j] - frameGray[srcJ])
+                    if (lumDiff > motionThreshold) continue
+
+                    sumR[j] += ((framePixels[srcJ] shr 16) and 0xFF) * conf
+                    sumG[j] += ((framePixels[srcJ] shr 8) and 0xFF) * conf
+                    sumB[j] += (framePixels[srcJ] and 0xFF) * conf
+                    weightSum[j] += conf
                 }
             }
-            mergedCount = newCount
+            Log.d("CaptureManager", "Frame $i: tile-aligned ${max(tilesX,1)}x${max(tilesY,1)} tiles")
+        }
+
+        val avgPixels = IntArray(n)
+        for (i in 0 until n) {
+            val w2 = weightSum[i]
+            val r = (sumR[i] / w2 + 0.5f).toInt().coerceIn(0, 255)
+            val g = (sumG[i] / w2 + 0.5f).toInt().coerceIn(0, 255)
+            val b = (sumB[i] / w2 + 0.5f).toInt().coerceIn(0, 255)
+            avgPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
         }
 
         val merged = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -221,63 +438,57 @@ class CaptureManager @Inject constructor(
         val stream = java.io.ByteArrayOutputStream()
         merged.compress(Bitmap.CompressFormat.JPEG, 97, stream)
         merged.recycle()
-        Log.d("CaptureManager", "Burst merged $mergedCount frames, ${w}x${h}")
+        Log.d("CaptureManager", "Burst merged ${frames.size} frames (tile-aligned), ${w}x${h}")
         return Pair(stream.toByteArray(), rotation)
     }
 
-    private fun toGrayscale(bitmap: Bitmap): Triple<IntArray, Int, Int> {
-        val w = bitmap.width
-        val h = bitmap.height
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
-        val gray = IntArray(w * h)
-        for (i in pixels.indices) {
-            val r = (pixels[i] shr 16) and 0xFF
-            val g = (pixels[i] shr 8) and 0xFF
-            val b = pixels[i] and 0xFF
-            gray[i] = (r * 77 + g * 150 + b * 29) shr 8
-        }
-        return Triple(gray, w, h)
-    }
-
-    private fun alignGlobal(
-        ref: Triple<IntArray, Int, Int>,
-        alt: Triple<IntArray, Int, Int>
-    ): Pair<Int, Int> {
+    private fun alignTile(
+        refGray: IntArray, altGray: IntArray,
+        w: Int, h: Int,
+        tileX: Int, tileY: Int, tileSize: Int
+    ): Triple<Int, Int, Float> {
         val searchRadius = 4
-        val (refG, rw, rh) = ref
-        val (altG, aw, ah) = alt
-        if (rw != aw || rh != ah) return Pair(0, 0)
-
         var bestDx = 0
         var bestDy = 0
         var bestSad = Long.MAX_VALUE
+        var secondBestSad = Long.MAX_VALUE
+
+        val rowEnd = min(tileY + tileSize, h)
+        val colEnd = min(tileX + tileSize, w)
 
         for (dy in -searchRadius..searchRadius) {
             for (dx in -searchRadius..searchRadius) {
                 var sad = 0L
                 var count = 0
-                val rowStart = kotlin.math.max(0, -dy)
-                val rowEnd = kotlin.math.min(rh, rh - dy)
-                val colStart = kotlin.math.max(0, -dx)
-                val colEnd = kotlin.math.min(rw, rw - dx)
-                for (row in rowStart until rowEnd) {
-                    for (col in colStart until colEnd) {
-                        sad += kotlin.math.abs(refG[row * rw + col] - altG[(row + dy) * rw + (col + dx)])
+                for (row in tileY until rowEnd) {
+                    val srcRow = row + dy
+                    if (srcRow < 0 || srcRow >= h) continue
+                    for (col in tileX until colEnd) {
+                        val srcCol = col + dx
+                        if (srcCol < 0 || srcCol >= w) continue
+                        sad += abs(refGray[row * w + col] - altGray[srcRow * w + srcCol])
                         count++
                     }
                 }
                 if (count > 0) {
                     val avgSad = sad / count
                     if (avgSad < bestSad) {
+                        secondBestSad = bestSad
                         bestSad = avgSad
                         bestDx = dx
                         bestDy = dy
+                    } else if (avgSad < secondBestSad) {
+                        secondBestSad = avgSad
                     }
                 }
             }
         }
-        return Pair(bestDx, bestDy)
+
+        val confidence = if (bestSad < 1) 1f
+        else if (secondBestSad <= bestSad) 0f
+        else (1f - bestSad.toFloat() / secondBestSad.toFloat()).coerceIn(0f, 1f)
+
+        return Triple(bestDx, bestDy, confidence)
     }
 
     private fun pickSharpestIdx(frames: List<Pair<ByteArray, Int>>): Int {
@@ -342,6 +553,56 @@ class CaptureManager @Inject constructor(
         return (r * 77 + g * 150 + b * 29) shr 8
     }
 
+    fun pickBestBurstFrame(frames: List<Pair<ByteArray, Int>>, faceRects: List<RectF> = emptyList()): Int {
+        if (frames.size <= 1) return 0
+        var bestScore = -1f
+        var bestIdx = 0
+        val opts = BitmapFactory.Options().apply { inSampleSize = 4 }
+        for (i in frames.indices) {
+            val thumb = BitmapFactory.decodeByteArray(
+                frames[i].first, 0, frames[i].first.size, opts
+            ) ?: continue
+            var score = measureSharpness(thumb)
+            if (faceRects.isNotEmpty()) {
+                val faceSharpness = measureFaceSharpness(thumb, faceRects)
+                score = score * 0.4f + faceSharpness * 0.6f
+            }
+            thumb.recycle()
+            if (score > bestScore) {
+                bestScore = score
+                bestIdx = i
+            }
+        }
+        return bestIdx
+    }
+
+    private fun measureFaceSharpness(bitmap: Bitmap, faceRects: List<RectF>): Float {
+        val w = bitmap.width
+        val h = bitmap.height
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        var totalEdge = 0.0
+        var totalCount = 0
+        for (face in faceRects) {
+            val left = (face.left * w).toInt().coerceIn(1, w - 2)
+            val top = (face.top * h).toInt().coerceIn(1, h - 2)
+            val right = (face.right * w).toInt().coerceIn(left + 1, w - 1)
+            val bottom = (face.bottom * h).toInt().coerceIn(top + 1, h - 1)
+            for (y in top until bottom) {
+                for (x in left until right) {
+                    val c = lum(pixels[y * w + x])
+                    val t = lum(pixels[(y - 1) * w + x])
+                    val b = lum(pixels[(y + 1) * w + x])
+                    val l = lum(pixels[y * w + (x - 1)])
+                    val r = lum(pixels[y * w + (x + 1)])
+                    totalEdge += abs(4 * c - t - b - l - r)
+                    totalCount++
+                }
+            }
+        }
+        return if (totalCount > 0) (totalEdge / totalCount).toFloat() else 0f
+    }
+
     suspend fun saveProcessedCopy(
         rawUri: String,
         beautyLevel: Int = 0,
@@ -353,33 +614,159 @@ class CaptureManager @Inject constructor(
         processing: ProcessingParams = ProcessingParams(),
         sceneContrast: Float = 0f,
         captureIso: Int = 100,
-        preset: String = "AUTO"
-    ): String {
+        preset: String = "AUTO",
+        enableNeuralDenoise: Boolean = false,
+        portraitLightingMode: PortraitLighting.LightingMode = PortraitLighting.LightingMode.NATURAL
+    ): ProcessingResult {
+        if (preset == "TRUE_SCENE") {
+            Log.d("Pipeline", "TRUE_SCENE mode — skipping all AI processing")
+            return ProcessingResult(rawUri)
+        }
         return withContext(Dispatchers.Default) {
             try {
                 val pipelineStart = System.nanoTime()
                 val sourceUri = Uri.parse(rawUri)
-                val inputStream = context.contentResolver.openInputStream(sourceUri) ?: return@withContext rawUri
+
+                val inputStream = context.contentResolver.openInputStream(sourceUri) ?: return@withContext ProcessingResult(rawUri)
                 val original = BitmapFactory.decodeStream(inputStream)
                 inputStream.close()
-                if (original == null) return@withContext rawUri
+                if (original == null) return@withContext ProcessingResult(rawUri)
                 Log.d("Pipeline", "DECODE: ${(System.nanoTime() - pipelineStart) / 1_000_000}ms, ${original.width}x${original.height}")
-                val enhStart = System.nanoTime()
-                val params = ImageEnhancer.EnhanceParams.forPreset(preset, captureIso, sceneContrast)
+
                 val origScore = ImageEnhancer.scoreQuality(original)
-                Log.d("Pipeline", "SCORE_ORIG: ${(System.nanoTime() - enhStart) / 1_000_000}ms")
-                val enhStart2 = System.nanoTime()
+
+                val params = ImageEnhancer.EnhanceParams.forPreset(preset, captureIso, sceneContrast)
                 val enhanced = ImageEnhancer.enhance(original, params)
-                Log.d("Pipeline", "ENHANCE: ${(System.nanoTime() - enhStart2) / 1_000_000}ms")
-                val enhScore = ImageEnhancer.scoreQuality(enhanced)
-                Log.d("Pipeline", "Quality: orig=%.3f, ai=%.3f, preset=%s, total=${(System.nanoTime() - pipelineStart) / 1_000_000}ms".format(origScore, enhScore, preset))
-                if (enhScore < origScore - 0.02f) {
-                    Log.d("Pipeline", "AI worse than original, keeping original")
-                    enhanced.recycle()
-                    original.recycle()
-                    return@withContext rawUri
-                }
                 original.recycle()
+
+                val canvas = Canvas(enhanced)
+                val stages = mutableListOf<String>()
+
+                if (captureIso >= 400) {
+                    try { NoiseReducer.apply(enhanced, captureIso); stages.add("noise_reduction") }
+                    catch (_: OutOfMemoryError) { System.gc() }
+                }
+
+                if (enableNeuralDenoise && captureIso >= 800 && neuralDenoiser?.isAvailable == true) {
+                    try {
+                        val w = enhanced.width; val h = enhanced.height
+                        val pixels = IntArray(w * h)
+                        enhanced.getPixels(pixels, 0, w, 0, 0, w, h)
+                        val lum = FloatArray(w * h) { i ->
+                            val r = (pixels[i] shr 16) and 0xFF
+                            val g = (pixels[i] shr 8) and 0xFF
+                            val b = pixels[i] and 0xFF
+                            0.299f * r + 0.587f * g + 0.114f * b
+                        }
+                        val noiseLevel = (captureIso / 12800f).coerceIn(0.02f, 0.15f)
+                        val denoised = neuralDenoiser!!.denoise(lum, w, h, noiseLevel)
+                        for (i in pixels.indices) {
+                            val origLum = lum[i].coerceAtLeast(1f)
+                            val scale = denoised[i] / origLum
+                            val r = ((pixels[i] shr 16 and 0xFF) * scale).toInt().coerceIn(0, 255)
+                            val g = ((pixels[i] shr 8 and 0xFF) * scale).toInt().coerceIn(0, 255)
+                            val b = ((pixels[i] and 0xFF) * scale).toInt().coerceIn(0, 255)
+                            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                        }
+                        enhanced.setPixels(pixels, 0, w, 0, 0, w, h)
+                        stages.add("neural_denoise")
+                        Log.d("Pipeline", "Neural denoise applied: ISO=$captureIso, noise=$noiseLevel")
+                    } catch (e: Exception) {
+                        Log.w("Pipeline", "Neural denoise failed", e)
+                    } catch (_: OutOfMemoryError) { System.gc() }
+                }
+
+                val hasFaces = faceRects.isNotEmpty()
+                if (!isHdr) {
+                    ToneCurveEngine.apply(enhanced, style, skinHueProtection = hasFaces, chromaCompression = if (isHdr) 0.3f else 0f, faceRects = faceRects)
+                    stages.add("tone_curve")
+                } else {
+                    try {
+                        applyLocalToneMap(enhanced, 0.5f)
+                        stages.add("local_tone_map")
+                        ToneCurveEngine.apply(enhanced, style, skinHueProtection = hasFaces, chromaCompression = 0.3f, faceRects = faceRects)
+                    }
+                    catch (_: OutOfMemoryError) { System.gc() }
+                }
+
+                if (sceneContrast > 0.15f) {
+                    val shadowStrength = HdrProcessor.computeShadowBoostStrength(sceneContrast)
+                    applyShadowRecovery(enhanced, shadowStrength)
+                    stages.add("shadow_recovery")
+                }
+
+                if (sceneContrast > 0.2f && !isPortraitMode) {
+                    try {
+                        val sw = enhanced.width; val sh = enhanced.height
+                        val skyPixels = IntArray(sw * sh)
+                        enhanced.getPixels(skyPixels, 0, sw, 0, 0, sw, sh)
+                        val skyMask = SkySegmenter.detectSkyMask(skyPixels, sw, sh)
+                        val skyFraction = SkySegmenter.computeSkyFraction(skyMask)
+                        if (skyFraction in 0.05f..0.7f) {
+                            SkySegmenter.applyGndFilter(skyPixels, sw, sh, skyMask, (sceneContrast * 0.8f).coerceIn(0.2f, 0.6f))
+                            SkySegmenter.applySkyRecovery(skyPixels, sw, sh, skyMask)
+                            enhanced.setPixels(skyPixels, 0, sw, 0, 0, sw, sh)
+                            stages.add("sky_gnd")
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (beautyLevel > 0 && faceRects.isNotEmpty()) {
+                    try { applyLabBeauty(enhanced, canvas, beautyLevel, faceRects); stages.add("beauty") }
+                    catch (_: OutOfMemoryError) { System.gc() }
+                }
+
+                if (style != PhotoStyle.NATURAL) {
+                    applyHighlightRolloffToBitmap(enhanced, style)
+                    stages.add("highlight_rolloff")
+                }
+
+                if (style != PhotoStyle.NATURAL && captureIso < 3200) {
+                    try {
+                        val sharpParams = LaplacianSharpener.SharpParams.forIso(captureIso)
+                        LaplacianSharpener.sharpen(enhanced, sharpParams)
+                        stages.add("laplacian_sharpen")
+                    } catch (_: OutOfMemoryError) { System.gc() }
+                }
+
+                if (isPortraitMode && faceRects.isNotEmpty()) {
+                    try { applyPortraitBokeh(enhanced, canvas, faceRects); stages.add("portrait_bokeh") }
+                    catch (_: OutOfMemoryError) { System.gc() }
+
+                    val estimator = depthEstimator
+                    if (estimator != null && estimator.isAvailable()) {
+                        try {
+                            val ew = enhanced.width; val eh = enhanced.height
+                            val epixels = IntArray(ew * eh)
+                            enhanced.getPixels(epixels, 0, ew, 0, 0, ew, eh)
+                            val depthMap = estimator.estimateDepth(enhanced)
+                            if (depthMap != null) {
+                                val inputSize = estimator.getInputSize()
+                                val subjectMask = DepthBokeh.generateSubjectMask(
+                                    depthMap, inputSize, faceRects, ew, eh, epixels
+                                )
+                                applyDepthSelectiveWarmth(epixels, subjectMask, ew, eh)
+                                if (portraitLightingMode != PortraitLighting.LightingMode.NATURAL) {
+                                    PortraitLighting.apply(epixels, ew, eh, subjectMask, depthMap, portraitLightingMode)
+                                    stages.add("portrait_lighting")
+                                }
+                                enhanced.setPixels(epixels, 0, ew, 0, 0, ew, eh)
+                                stages.add("depth_mask")
+                            }
+                        } catch (e: Exception) {
+                            Log.w("Pipeline", "Semantic depth masking failed", e)
+                        } catch (_: OutOfMemoryError) { System.gc() }
+                    }
+                }
+
+                val enhScore = ImageEnhancer.scoreQuality(enhanced)
+                Log.d("Pipeline", "Quality: orig=%.3f, ai=%.3f, stages=${stages.joinToString(",")}, total=${(System.nanoTime() - pipelineStart) / 1_000_000}ms".format(origScore, enhScore))
+
+                if (enhScore < origScore - 0.02f) {
+                    Log.d("Pipeline", "AI worse than original, keeping original (skipped: ${stages.joinToString(",")})")
+                    enhanced.recycle()
+                    return@withContext ProcessingResult(rawUri)
+                }
 
                 val stream = java.io.ByteArrayOutputStream()
                 enhanced.compress(Bitmap.CompressFormat.JPEG, 97, stream)
@@ -400,14 +787,19 @@ class CaptureManager @Inject constructor(
 
                 val copyUri = saveJpegToMediaStore(stream.toByteArray(), rotation, "_AI")
                 Log.d("Pipeline", "SAVE: done, total=${(System.nanoTime() - pipelineStart) / 1_000_000}ms, ${stream.size()} bytes")
-                copyUri.ifEmpty { rawUri }
+                val didNeural = "neural_denoise" in stages
+                ProcessingResult(
+                    uri = copyUri.ifEmpty { rawUri },
+                    appliedStages = stages.toList(),
+                    didNeuralDenoise = didNeural
+                )
             } catch (e: Exception) {
                 Log.w("Pipeline", "Enhancement FAILED: ${e.message}", e)
-                rawUri
+                ProcessingResult(rawUri)
             } catch (oom: OutOfMemoryError) {
                 Log.w("Pipeline", "Enhancement OOM")
                 System.gc()
-                rawUri
+                ProcessingResult(rawUri)
             }
         }
     }
@@ -742,7 +1134,7 @@ class CaptureManager @Inject constructor(
         return Pair(jpegBytes, frames[0].second)
     }
 
-    private suspend fun captureInMemory(imageCapture: ImageCapture): Pair<ByteArray, Int> {
+    suspend fun captureInMemory(imageCapture: ImageCapture): Pair<ByteArray, Int> {
         return suspendCancellableCoroutine { continuation ->
             imageCapture.takePicture(executor, object : ImageCapture.OnImageCapturedCallback() {
                 override fun onCaptureSuccess(image: ImageProxy) {
@@ -755,7 +1147,12 @@ class CaptureManager @Inject constructor(
                         val bytes = ByteArray(buffer.remaining())
                         buffer.get(bytes)
                         val rotation = image.imageInfo.rotationDegrees
+                        val ts = image.imageInfo.timestamp
                         image.close()
+                        zslBuffer.push(ZslRingBuffer.ZslFrame(
+                            timestampNs = ts, iso = 0, exposureNs = 0,
+                            jpegBytes = bytes, yuvBytes = null, width = 0, height = 0
+                        ))
                         continuation.resume(Pair(bytes, rotation))
                     } catch (e: Exception) {
                         image.close()
@@ -855,13 +1252,13 @@ class CaptureManager @Inject constructor(
         }
     }
 
-    suspend fun saveRawCopy(jpegBytes: ByteArray, rotationDegrees: Int): String {
+    suspend fun saveOriginalJpegFallback(jpegBytes: ByteArray, rotationDegrees: Int): String {
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
             .format(System.currentTimeMillis())
         val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "SPECTRA_RAW_$timestamp")
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "SPECTRA_ORIGINAL_$timestamp")
             put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/Spectra/RAW")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "DCIM/Spectra/Originals")
         }
         return withContext(Dispatchers.IO) {
             val uri = context.contentResolver.insert(
@@ -882,14 +1279,14 @@ class CaptureManager @Inject constructor(
                     if (exifOrientation != ExifInterface.ORIENTATION_NORMAL) {
                         exif.setAttribute(ExifInterface.TAG_ORIENTATION, exifOrientation.toString())
                     }
-                    exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, "SPECTRA RAW - unprocessed")
+                    exif.setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION, "SPECTRA Original JPEG — RAW unavailable on this lens")
                     exif.saveAttributes()
                 }
             } catch (e: Exception) {
-                Log.w("CaptureManager", "RAW EXIF write failed", e)
+                Log.w("CaptureManager", "Original EXIF write failed", e)
             }
 
-            Log.d("CaptureManager", "RAW copy saved: $uri")
+            Log.d("CaptureManager", "Original JPEG fallback saved: $uri")
             uri.toString()
         }
     }
@@ -906,18 +1303,21 @@ class CaptureManager @Inject constructor(
         faceRects: List<android.graphics.RectF> = emptyList(),
         isPortraitMode: Boolean = false,
         evBias: Float = 0f
-    ): String {
+    ): HdrCaptureResult {
         val brackets = if (evBias != 0f) {
             HdrProcessor.computeBracketExposuresForHighlights(baseExposureNs, baseIso, evBias)
         } else {
             HdrProcessor.computeBracketExposures(baseExposureNs, baseIso)
         }
-        val frames = mutableListOf<Pair<ByteArray, Int>>()
+        var frames = mutableListOf<Pair<ByteArray, Int>>()
 
+        // ZSL frames are all captured at the same auto-exposure, so they cannot be used
+        // as bracket frames with different exposures. Always capture fresh bracket frames.
         try {
             for ((exposureNs, iso) in brackets) {
                 applyBracketSettings(exposureNs, iso)
-                delay(300)
+                // Wait ~5 frames at 30fps for Camera2 manual exposure to take effect
+                delay(150)
                 try {
                     val frame = captureInMemory(imageCapture)
                     frames.add(frame)
@@ -933,7 +1333,10 @@ class CaptureManager @Inject constructor(
 
         if (frames.size < 2) {
             val uri = saveJpegToMediaStore(frames[0].first, frames[0].second, "_HDR")
-            return uri
+            return HdrCaptureResult(uri, CaptureResultMetadata(
+                actualFrameCount = frames.size, didBurstMerge = false, didHdr = false,
+                hdrFrameCount = 0, fallbackReason = "only ${frames.size} of ${brackets.size} bracket frames captured"
+            ))
         }
 
         val merged = withContext(Dispatchers.Default) {
@@ -941,18 +1344,79 @@ class CaptureManager @Inject constructor(
         }
 
         val uri = saveJpegToMediaStore(merged.first, merged.second, "_HDR")
-        Log.d("CaptureManager", "HDR bracket: ${frames.size} frames merged")
-        return uri
+        Log.d("CaptureManager", "HDR bracket: ${frames.size}/${brackets.size} frames merged")
+        return HdrCaptureResult(uri, CaptureResultMetadata(
+            actualFrameCount = frames.size, didBurstMerge = false, didHdr = true,
+            hdrFrameCount = frames.size
+        ))
+    }
+
+    suspend fun captureHdrBracket5Frame(
+        imageCapture: ImageCapture,
+        baseExposureNs: Long,
+        baseIso: Int,
+        applyBracketSettings: suspend (exposureNs: Long, iso: Int) -> Unit,
+        restoreAutoExposure: suspend () -> Unit,
+        beautyLevel: Int = 0,
+        style: PhotoStyle = PhotoStyle.NATURAL,
+        isFrontCamera: Boolean = false,
+        faceRects: List<android.graphics.RectF> = emptyList(),
+        isPortraitMode: Boolean = false
+    ): HdrCaptureResult {
+        val brackets = HdrProcessor.computeBracketExposures5Frame(baseExposureNs, baseIso)
+        var frames = mutableListOf<Pair<ByteArray, Int>>()
+
+        // ZSL frames are all same-exposure — cannot substitute for bracket frames.
+        try {
+            for ((exposureNs, iso) in brackets) {
+                applyBracketSettings(exposureNs, iso)
+                delay(150)
+                try {
+                    val frame = captureInMemory(imageCapture)
+                    frames.add(frame)
+                } catch (e: Exception) {
+                    Log.w("CaptureManager", "HDR 5-frame bracket frame failed", e)
+                }
+            }
+        } finally {
+            restoreAutoExposure()
+        }
+
+        if (frames.isEmpty()) throw androidx.camera.core.ImageCaptureException(0, "All HDR frames failed", null)
+
+        if (frames.size < 2) {
+            val uri = saveJpegToMediaStore(frames[0].first, frames[0].second, "_HDR5")
+            return HdrCaptureResult(uri, CaptureResultMetadata(
+                actualFrameCount = frames.size, didBurstMerge = false, didHdr = false,
+                hdrFrameCount = 0, fallbackReason = "only ${frames.size} of ${brackets.size} bracket frames captured"
+            ))
+        }
+
+        val merged = withContext(Dispatchers.Default) {
+            mergeHdrFrames(frames)
+        }
+
+        val uri = saveJpegToMediaStore(merged.first, merged.second, "_HDR5")
+        Log.d("CaptureManager", "HDR 5-frame bracket: ${frames.size}/${brackets.size} frames merged")
+        return HdrCaptureResult(uri, CaptureResultMetadata(
+            actualFrameCount = frames.size, didBurstMerge = false, didHdr = true,
+            hdrFrameCount = frames.size
+        ))
     }
 
     private fun mergeHdrFrames(frames: List<Pair<ByteArray, Int>>): Pair<ByteArray, Int> {
-        val maxPixels = 4_000_000
+        if (frames.size < 2) return frames.first()
+
         val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(frames[0].first, 0, frames[0].first.size, boundsOpts)
-        val imagePixels = boundsOpts.outWidth.toLong() * boundsOpts.outHeight
-        val sampleSize = if (imagePixels > maxPixels) {
+        val fullW = boundsOpts.outWidth
+        val fullH = boundsOpts.outHeight
+        val imagePixels = fullW.toLong() * fullH
+
+        val maxFusionPixels = 6_000_000L
+        val sampleSize = if (imagePixels > maxFusionPixels) {
             var s = 1
-            while (imagePixels / (s * s) > maxPixels) s *= 2
+            while (imagePixels / (s * s) > maxFusionPixels) s *= 2
             s
         } else 1
 
@@ -965,41 +1429,101 @@ class CaptureManager @Inject constructor(
             return frames.first()
         }
 
-        val w = bitmaps[0].width
-        val h = bitmaps[0].height
+        val subW = bitmaps[0].width
+        val subH = bitmaps[0].height
 
-        val pixelArrays = bitmaps.mapIndexed { index, bmp ->
-            if (bmp.width != w || bmp.height != h) {
-                bmp.recycle()
-                null
-            } else {
-                val pixels = IntArray(w * h)
-                bmp.getPixels(pixels, 0, w, 0, 0, w, h)
-                bmp.recycle()
-                pixels
-            }
-        }.filterNotNull()
+        val hdrProcessor = HdrProcessor()
+        val pixelArrays = bitmaps.map { bmp ->
+            val px = IntArray(subW * subH)
+            bmp.getPixels(px, 0, subW, 0, 0, subW, subH)
+            px
+        }
+        bitmaps.forEach { it.recycle() }
 
-        if (pixelArrays.size < 2) return frames.first()
-
-        val refPixels = pixelArrays[0]
-        val alignedFrames = mutableListOf(refPixels)
-        for (i in 1 until pixelArrays.size) {
-            alignedFrames.add(hdrProcessor.alignFrame(refPixels, pixelArrays[i], w, h))
+        val refIdx = pixelArrays.size / 2
+        val aligned = pixelArrays.mapIndexed { idx, px ->
+            if (idx == refIdx) px
+            else hdrProcessor.alignFrame(pixelArrays[refIdx], px, subW, subH)
         }
 
-        val merged = hdrProcessor.mertensFusion(alignedFrames, w, h)
+        val fused = hdrProcessor.semanticMertensFusion(aligned, subW, subH)
 
-        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        result.setPixels(merged, 0, w, 0, 0, w, h)
+        if (sampleSize <= 1) {
+            val result = Bitmap.createBitmap(subW, subH, Bitmap.Config.ARGB_8888)
+            result.setPixels(fused, 0, subW, 0, 0, subW, subH)
+            val stream = java.io.ByteArrayOutputStream()
+            result.compress(Bitmap.CompressFormat.JPEG, 95, stream)
+            result.recycle()
+            Log.d("CaptureManager", "HDR Mertens fusion: ${aligned.size} frames, ${subW}x${subH}")
+            return Pair(stream.toByteArray(), frames[0].second)
+        }
 
+        val baseRef = aligned[refIdx]
+        val ratioR = FloatArray(subW * subH)
+        val ratioG = FloatArray(subW * subH)
+        val ratioB = FloatArray(subW * subH)
+        for (i in 0 until subW * subH) {
+            val br = ((baseRef[i] shr 16) and 0xFF).coerceAtLeast(1)
+            val bg = ((baseRef[i] shr 8) and 0xFF).coerceAtLeast(1)
+            val bb = (baseRef[i] and 0xFF).coerceAtLeast(1)
+            ratioR[i] = (((fused[i] shr 16) and 0xFF).toFloat() / br).coerceIn(0f, 4f)
+            ratioG[i] = (((fused[i] shr 8) and 0xFF).toFloat() / bg).coerceIn(0f, 4f)
+            ratioB[i] = ((fused[i] and 0xFF).toFloat() / bb).coerceIn(0f, 4f)
+        }
+
+        val fullBase = BitmapFactory.decodeByteArray(frames[refIdx].first, 0, frames[refIdx].first.size)
+            ?: return Pair(frames[refIdx].first, frames[refIdx].second)
+        val fullPixels = IntArray(fullW * fullH)
+        fullBase.getPixels(fullPixels, 0, fullW, 0, 0, fullW, fullH)
+        fullBase.recycle()
+
+        for (y in 0 until fullH) {
+            for (x in 0 until fullW) {
+                val srcX = x.toFloat() / fullW * subW - 0.5f
+                val srcY = y.toFloat() / fullH * subH - 0.5f
+                val x0 = srcX.toInt().coerceIn(0, subW - 2)
+                val y0 = srcY.toInt().coerceIn(0, subH - 2)
+                val fx = (srcX - x0).coerceIn(0f, 1f)
+                val fy = (srcY - y0).coerceIn(0f, 1f)
+
+                fun bilinear(arr: FloatArray): Float {
+                    val v00 = arr[y0 * subW + x0]; val v10 = arr[y0 * subW + x0 + 1]
+                    val v01 = arr[(y0 + 1) * subW + x0]; val v11 = arr[(y0 + 1) * subW + x0 + 1]
+                    return v00 * (1f - fx) * (1f - fy) + v10 * fx * (1f - fy) + v01 * (1f - fx) * fy + v11 * fx * fy
+                }
+
+                val i = y * fullW + x
+                val origR = (fullPixels[i] shr 16) and 0xFF
+                val origG = (fullPixels[i] shr 8) and 0xFF
+                val origB = fullPixels[i] and 0xFF
+                val r = (origR * bilinear(ratioR)).toInt().coerceIn(0, 255)
+                val g = (origG * bilinear(ratioG)).toInt().coerceIn(0, 255)
+                val b = (origB * bilinear(ratioB)).toInt().coerceIn(0, 255)
+                fullPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+
+        val result = Bitmap.createBitmap(fullW, fullH, Bitmap.Config.ARGB_8888)
+        result.setPixels(fullPixels, 0, fullW, 0, 0, fullW, fullH)
         val stream = java.io.ByteArrayOutputStream()
         result.compress(Bitmap.CompressFormat.JPEG, 95, stream)
-        val jpegBytes = stream.toByteArray()
         result.recycle()
 
-        Log.d("CaptureManager", "HDR merge: ${pixelArrays.size} frames fused")
-        return Pair(jpegBytes, frames[0].second)
+        Log.d("CaptureManager", "HDR ratio-map fusion: ${aligned.size} frames, ${fullW}x${fullH} (fused at ${subW}x${subH})")
+        return Pair(stream.toByteArray(), frames[0].second)
+    }
+
+    suspend fun mergeAndSaveHdr(frames: List<Pair<ByteArray, Int>>): String {
+        return withContext(Dispatchers.Default) {
+            val merged = mergeHdrFrames(frames)
+            val uri = saveJpegToMediaStore(merged.first, merged.second, "_HDR")
+            Log.d("CaptureManager", "HDR EV bracket: ${frames.size} frames merged")
+            uri
+        }
+    }
+
+    suspend fun saveJpegFrame(frame: Pair<ByteArray, Int>, suffix: String = ""): String {
+        return saveJpegToMediaStore(frame.first, frame.second, suffix)
     }
 
     fun deletePhoto(uriString: String): Boolean {
@@ -1013,6 +1537,11 @@ class CaptureManager @Inject constructor(
 
     private fun applyShadowRecovery(bitmap: Bitmap, strength: Float) {
         if (strength <= 0f) return
+
+        if (com.spectra.camera.gpu.ShaderPipeline.applyShadowRecovery(bitmap, strength)) {
+            Log.d("CaptureManager", "Shadow recovery (AGSL GPU): strength=${"%.2f".format(strength)}")
+            return
+        }
 
         val w = bitmap.width
         val h = bitmap.height
@@ -1038,7 +1567,7 @@ class CaptureManager @Inject constructor(
         }
 
         bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
-        Log.d("CaptureManager", "Shadow recovery applied: strength=${"%.2f".format(strength)}")
+        Log.d("CaptureManager", "Shadow recovery (CPU): strength=${"%.2f".format(strength)}")
     }
 
     private fun applyPostProcess(uri: Uri, beautyLevel: Int, style: PhotoStyle, isFrontCamera: Boolean = false, isHdr: Boolean = false, faceRects: List<RectF> = emptyList(), isPortraitMode: Boolean = false, sceneType: SceneType = SceneType.UNKNOWN, currentIso: Int = 100, processing: ProcessingParams = ProcessingParams(), sceneContrast: Float = 0f) {
@@ -1151,9 +1680,11 @@ class CaptureManager @Inject constructor(
             sharpMs = (System.nanoTime() - sharpStart) / 1_000_000
             cumulativeMs += sharpMs
 
-            // Stage: Tone curve / 3D LUT (never skip)
+            // Stage: Tone curve / 3D LUT (skip for HDR — already local-tone-mapped)
             val toneStart = System.nanoTime()
-            ToneCurveEngine.apply(result, style)
+            if (!isHdr) {
+                ToneCurveEngine.apply(result, style)
+            }
             toneMs = (System.nanoTime() - toneStart) / 1_000_000
             cumulativeMs += toneMs
 
@@ -1165,6 +1696,25 @@ class CaptureManager @Inject constructor(
             }
             shadowMs = (System.nanoTime() - shadowStart) / 1_000_000
             cumulativeMs += shadowMs
+
+            // Stage: Sky GND filter
+            if (sceneContrast > 0.2f && !isPortraitMode) {
+                try {
+                    val sw = result.width; val sh = result.height
+                    val skyPixels = IntArray(sw * sh)
+                    result.getPixels(skyPixels, 0, sw, 0, 0, sw, sh)
+                    val skyMask = SkySegmenter.detectSkyMask(skyPixels, sw, sh)
+                    val skyFraction = SkySegmenter.computeSkyFraction(skyMask)
+                    if (skyFraction in 0.05f..0.7f) {
+                        val gndStrength = (sceneContrast * 0.8f).coerceIn(0.2f, 0.6f)
+                        SkySegmenter.applyGndFilter(skyPixels, sw, sh, skyMask, gndStrength)
+                        SkySegmenter.applySkyRecovery(skyPixels, sw, sh, skyMask)
+                        result.setPixels(skyPixels, 0, sw, 0, 0, sw, sh)
+                    }
+                } catch (e: Exception) {
+                    Log.w("CaptureManager", "Sky GND filter failed", e)
+                }
+            }
 
             // Stage: Beauty
             if (cumulativeMs > PROCESSING_BUDGET_MS) {
@@ -1263,6 +1813,12 @@ class CaptureManager @Inject constructor(
         val params = ToneCurveEngine.styleHighlightParams(style)
         if (params.strength <= 0f) return
 
+        if (com.spectra.camera.gpu.ShaderPipeline.applyHighlightRolloff(
+                bitmap, params.shoulderStart.toFloat(), params.maxOutput.toFloat(), params.strength)) {
+            Log.d("CaptureManager", "Highlight rolloff (AGSL GPU): style=$style")
+            return
+        }
+
         val rolloff = ToneCurveEngine.buildHighlightRolloffCurve(params.shoulderStart, params.maxOutput, params.strength)
 
         val w = bitmap.width
@@ -1272,17 +1828,30 @@ class CaptureManager @Inject constructor(
 
         for (i in pixels.indices) {
             val pixel = pixels[i]
-            val r = rolloff[(pixel shr 16) and 0xFF]
-            val g = rolloff[(pixel shr 8) and 0xFF]
-            val b = rolloff[pixel and 0xFF]
-            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            val r = ((pixel shr 16) and 0xFF)
+            val g = ((pixel shr 8) and 0xFF)
+            val b = (pixel and 0xFF)
+            val lum = (r * 77 + g * 150 + b * 29) shr 8
+            val newLum = rolloff[lum]
+            if (lum > 0 && newLum != lum) {
+                val scale = newLum.toFloat() / lum
+                val rOut = (r * scale).toInt().coerceIn(0, 255)
+                val gOut = (g * scale).toInt().coerceIn(0, 255)
+                val bOut = (b * scale).toInt().coerceIn(0, 255)
+                pixels[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
+            }
         }
 
         bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
-        Log.d("CaptureManager", "Highlight rolloff applied: style=$style, shoulder=${params.shoulderStart}, max=${params.maxOutput}")
+        Log.d("CaptureManager", "Highlight rolloff (CPU): style=$style, shoulder=${params.shoulderStart}, max=${params.maxOutput}")
     }
 
     private fun applyHdrToneMap(bitmap: Bitmap) {
+        if (com.spectra.camera.gpu.ShaderPipeline.applyToneMap(bitmap, 0.4f, 0.3f)) {
+            Log.d("CaptureManager", "HDR tone map (AGSL GPU) applied")
+            return
+        }
+
         val w = bitmap.width
         val h = bitmap.height
         val pixels = IntArray(w * h)
@@ -1296,7 +1865,6 @@ class CaptureManager @Inject constructor(
 
             val lum = 0.299f * r + 0.587f * g + 0.114f * b
 
-            // Reinhard-inspired tone curve: boost shadows, compress highlights
             val mapped = if (lum < 0.01f) lum else {
                 val shadowBoost = 1.0f + 0.4f * (1.0f - lum) * (1.0f - lum)
                 val highlightCompress = 1.0f / (1.0f + lum * 0.3f)
@@ -1399,21 +1967,17 @@ class CaptureManager @Inject constructor(
         val pixels = IntArray(w * h)
         small.getPixels(pixels, 0, w, 0, 0, w, h)
         small.recycle()
+        return HdrProcessor.computeDrd(pixels)
+    }
 
-        var darkCount = 0
-        var brightCount = 0
-        for (pixel in pixels) {
-            val lum = (((pixel shr 16) and 0xFF) * 77 +
-                    ((pixel shr 8) and 0xFF) * 150 +
-                    (pixel and 0xFF) * 29) shr 8
-            if (lum < 50) darkCount++
-            if (lum > 200) brightCount++
-        }
-
-        val total = pixels.size.toFloat()
-        val darkRatio = darkCount / total
-        val brightRatio = brightCount / total
-        return (darkRatio * brightRatio * 100f).coerceIn(0f, 1f)
+    fun shouldAutoHdr(jpegBytes: ByteArray): Boolean {
+        val options = BitmapFactory.Options().apply { inSampleSize = 16 }
+        val small = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size, options) ?: return false
+        val w = small.width; val h = small.height
+        val pixels = IntArray(w * h)
+        small.getPixels(pixels, 0, w, 0, 0, w, h)
+        small.recycle()
+        return HdrProcessor.shouldTriggerHdr(pixels)
     }
 
     private fun applyFaceAwareBeauty(result: Bitmap, canvas: Canvas, beautyLevel: Int, faceRects: List<RectF>) {
@@ -1470,6 +2034,23 @@ class CaptureManager @Inject constructor(
         }
     }
 
+    private fun applyDepthSelectiveWarmth(pixels: IntArray, mask: FloatArray, w: Int, h: Int) {
+        for (i in pixels.indices) {
+            val subjectWeight = mask[i]
+            val bgWeight = 1f - subjectWeight
+            val r = (pixels[i] shr 16) and 0xFF
+            val g = (pixels[i] shr 8) and 0xFF
+            val b = pixels[i] and 0xFF
+
+            // Subject: slight warmth (+3R, +1G, -2B) scaled by mask
+            // Background: slight cool shift (-1R, 0G, +2B) scaled by inverse mask
+            val newR = (r + (3f * subjectWeight - 1f * bgWeight)).toInt().coerceIn(0, 255)
+            val newG = (g + (1f * subjectWeight)).toInt().coerceIn(0, 255)
+            val newB = (b + (-2f * subjectWeight + 2f * bgWeight)).toInt().coerceIn(0, 255)
+            pixels[i] = (0xFF shl 24) or (newR shl 16) or (newG shl 8) or newB
+        }
+    }
+
     private fun applyPortraitBokeh(bitmap: Bitmap, canvas: Canvas, faceRects: List<RectF>) {
         val estimator = depthEstimator
         if (estimator != null && estimator.isAvailable()) {
@@ -1490,42 +2071,22 @@ class CaptureManager @Inject constructor(
             return
         }
 
-        val focusDepth = if (faceRects.isNotEmpty()) {
-            val face = faceRects[0]
-            val cx = ((face.left + face.right) / 2f * depthInputSize).toInt().coerceIn(0, depthInputSize - 1)
-            val cy = ((face.top + face.bottom) / 2f * depthInputSize).toInt().coerceIn(0, depthInputSize - 1)
-            depthMap[cy * depthInputSize + cx]
-        } else {
-            depthMap[depthInputSize / 2 * depthInputSize + depthInputSize / 2]
-        }
-
-        val lumGuide = FloatArray(depthInputSize * depthInputSize)
-        val smallBmp = Bitmap.createScaledBitmap(bitmap, depthInputSize, depthInputSize, true)
-        val smallPixels = IntArray(depthInputSize * depthInputSize)
-        smallBmp.getPixels(smallPixels, 0, depthInputSize, 0, 0, depthInputSize, depthInputSize)
-        smallBmp.recycle()
-        for (i in smallPixels.indices) {
-            val r = (smallPixels[i] shr 16) and 0xFF
-            val g = (smallPixels[i] shr 8) and 0xFF
-            val b = smallPixels[i] and 0xFF
-            lumGuide[i] = (0.299f * r + 0.587f * g + 0.114f * b) / 255f
-        }
-
-        val refinedDepth = depthBokeh.guidedFilter(lumGuide, depthMap, depthInputSize, depthInputSize, radius = 4, eps = 0.01f)
+        val focusDepth = DepthBokeh.selectFocusDepth(depthMap, depthInputSize, faceRects)
 
         val pixels = IntArray(w * h)
         bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
 
         val result = depthBokeh.applyDepthBokeh(
-            pixels, refinedDepth, w, h,
+            pixels, depthMap, w, h,
             depthInputSize, depthInputSize,
             focusDepth = focusDepth,
-            maxBlurRadius = 15f
+            maxBlurRadius = 20f,
+            faceRects = faceRects
         )
 
         bitmap.setPixels(result, 0, w, 0, 0, w, h)
         canvas.drawBitmap(bitmap, 0f, 0f, Paint())
-        Log.d("CaptureManager", "Depth-map bokeh applied, focus=${"%.2f".format(focusDepth)}")
+        Log.d("CaptureManager", "Depth-map bokeh applied, focus=${"%.2f".format(focusDepth)}, guided filter upsampling")
     }
 
     private fun applyFallbackEllipseBokeh(bitmap: Bitmap, canvas: Canvas, faceRects: List<RectF>) {
@@ -1926,51 +2487,66 @@ class CaptureManager @Inject constructor(
             val pixels = IntArray(w * h)
             bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
 
-            val skinMask = buildSkinMask(pixels, w, h)
+            val skinMask = buildSkinMask(pixels, w, h, faceRects)
 
-            // Extract luminance
-            val luma = FloatArray(w * h) { i ->
+            val labL = FloatArray(w * h)
+            val labA = FloatArray(w * h)
+            val labB = FloatArray(w * h)
+            for (i in pixels.indices) {
                 val r = (pixels[i] shr 16) and 0xFF
                 val g = (pixels[i] shr 8) and 0xFF
                 val b = pixels[i] and 0xFF
-                0.299f * r + 0.587f * g + 0.114f * b
+                val lab = ColorSpaceUtils.rgbToLab(r, g, b)
+                labL[i] = lab[0]; labA[i] = lab[1]; labB[i] = lab[2]
             }
 
-            // Frequency separation
-            val sigma = 5f + beautyLevel * 2f  // 7px at level 1, 9px at 2, 11px at 3
-            val lowFreq = gaussianBlurLuma(luma, w, h, sigma)
-            val highFreq = FloatArray(w * h) { luma[it] - lowFreq[it] }
-
-            // Smooth only the low-frequency layer (removes blemishes, color unevenness)
+            val sigma = 5f + beautyLevel * 2f
+            val lowFreq = gaussianBlurLuma(labL, w, h, sigma)
+            val highFreq = FloatArray(w * h) { labL[it] - lowFreq[it] }
             val smoothedLow = gaussianBlurLuma(lowFreq, w, h, sigma * 0.5f)
 
-            // Recombine: smoothed low + original high (preserves texture)
-            // Only apply to skin pixels
             for (i in pixels.indices) {
                 if (!skinMask[i]) continue
-                val newLuma = smoothedLow[i] + highFreq[i]
-                val oldLuma = luma[i]
-                if (oldLuma < 1f) continue
-                val scale = (newLuma / oldLuma).coerceIn(0.7f, 1.3f)
-                val r = (((pixels[i] shr 16) and 0xFF) * scale).toInt().coerceIn(0, 255)
-                val g = (((pixels[i] shr 8) and 0xFF) * scale).toInt().coerceIn(0, 255)
-                val b = ((pixels[i] and 0xFF) * scale).toInt().coerceIn(0, 255)
-                pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                val newL = (smoothedLow[i] + highFreq[i]).coerceIn(0f, 100f)
+                val rgb = ColorSpaceUtils.labToRgb(newL, labA[i], labB[i])
+                pixels[i] = (0xFF shl 24) or (rgb[0] shl 16) or (rgb[1] shl 8) or rgb[2]
             }
 
             bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
         }
 
-        private fun buildSkinMask(pixels: IntArray, w: Int, h: Int): BooleanArray {
-            return BooleanArray(pixels.size) { i ->
+        private fun buildSkinMask(
+            pixels: IntArray, w: Int, h: Int,
+            faceRects: List<android.graphics.RectF> = emptyList()
+        ): BooleanArray {
+            val mask = BooleanArray(pixels.size)
+
+            if (faceRects.isNotEmpty()) {
+                for (face in faceRects) {
+                    val padX = (face.width() * 0.15f)
+                    val padY = (face.height() * 0.15f)
+                    val left = ((face.left - padX) * w).toInt().coerceIn(0, w - 1)
+                    val top = ((face.top - padY) * h).toInt().coerceIn(0, h - 1)
+                    val right = ((face.right + padX) * w).toInt().coerceIn(0, w)
+                    val bottom = ((face.bottom + padY) * h).toInt().coerceIn(0, h)
+                    for (y in top until bottom) {
+                        for (x in left until right) {
+                            mask[y * w + x] = true
+                        }
+                    }
+                }
+                return mask
+            }
+
+            for (i in pixels.indices) {
                 val r = (pixels[i] shr 16) and 0xFF
                 val g = (pixels[i] shr 8) and 0xFF
                 val b = pixels[i] and 0xFF
-                // YCbCr skin detection thresholds
                 val cb = (128f - 37.797f * r / 255f - 74.203f * g / 255f + 112f * b / 255f).toInt()
                 val cr = (128f + 112f * r / 255f - 93.786f * g / 255f - 18.214f * b / 255f).toInt()
-                cb in 77..127 && cr in 133..173
+                mask[i] = cb in 70..135 && cr in 125..180
             }
+            return mask
         }
 
         private fun gaussianBlurLuma(input: FloatArray, w: Int, h: Int, sigma: Float): FloatArray {
@@ -2022,6 +2598,8 @@ class CaptureManager @Inject constructor(
         ) {
             val temp = FloatArray(output.size)
             val rangeVar = 2f * rangeSigma * rangeSigma
+            val spatialSigma = spatialRadius / 2f
+            val spatialVar = 2f * spatialSigma * spatialSigma
 
             for (y in 0 until h) {
                 for (x in 0 until w) {
@@ -2038,10 +2616,14 @@ class CaptureManager @Inject constructor(
                     for (ny in y0..y1) {
                         for (nx in x0..x1) {
                             val nIdx = ny * w + nx
+                            val dx = (nx - x).toFloat()
+                            val dy = (ny - y).toFloat()
+                            val spatialWeight = kotlin.math.exp(-(dx * dx + dy * dy) / spatialVar)
                             val diff = guide[nIdx] - centerVal
                             val rangeWeight = kotlin.math.exp(-(diff * diff) / rangeVar)
-                            weightedSum += output[nIdx] * rangeWeight
-                            weightSum += rangeWeight
+                            val weight = spatialWeight * rangeWeight
+                            weightedSum += output[nIdx] * weight
+                            weightSum += weight
                         }
                     }
 

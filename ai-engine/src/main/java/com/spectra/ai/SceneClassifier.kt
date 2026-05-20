@@ -2,11 +2,13 @@ package com.spectra.ai
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import com.spectra.ai.model.FaceData
 import com.spectra.core.model.SceneType
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.GpuDelegate
+import org.tensorflow.lite.nnapi.NnApiDelegate
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -21,9 +23,10 @@ class SceneClassifier @Inject constructor(
 ) {
     private var interpreter: Interpreter? = null
     private var gpuDelegate: GpuDelegate? = null
+    private var nnApiDelegate: NnApiDelegate? = null
     private val inputSize = 224
     private val labelMap = mutableListOf<SceneType>()
-    private var useGpu = false
+    private var delegateType = "cpu"
 
     // Temporal scene smoothing (hysteresis) to prevent HUD flicker
     private val hysteresis = SceneHysteresis()
@@ -32,25 +35,56 @@ class SceneClassifier @Inject constructor(
         loadLabels()
         try {
             val model = loadModelFile("scene_classifier.tflite")
-            try {
-                gpuDelegate = GpuDelegate()
-                val options = Interpreter.Options().apply {
-                    addDelegate(gpuDelegate)
-                    setNumThreads(4)
-                }
-                interpreter = Interpreter(model, options)
-                useGpu = true
-            } catch (_: Exception) {
-                gpuDelegate?.close()
-                gpuDelegate = null
-                val cpuOptions = Interpreter.Options().apply { setNumThreads(4) }
-                interpreter = Interpreter(model, cpuOptions)
-                useGpu = false
-            }
-        } catch (_: Exception) {
+            interpreter = tryNnApi(model) ?: tryGpu(model) ?: tryCpu(model)
+            validateModelMetadata()
+        } catch (e: Exception) {
+            Log.w("SceneClassifier", "TFLite model not available, using heuristic classification", e)
             interpreter = null
         }
     }
+
+    private fun validateModelMetadata() {
+        val interp = interpreter ?: return
+        val outputShape = interp.getOutputTensor(0).shape()
+        val outputDim = if (outputShape.size >= 2) outputShape[1] else outputShape[0]
+        if (labelMap.isNotEmpty() && labelMap.size != outputDim) {
+            Log.w("SceneClassifier", "Label count (${labelMap.size}) != model output dim ($outputDim), falling back to heuristics")
+            interpreter?.close()
+            interpreter = null
+        } else {
+            Log.d("SceneClassifier", "Model validated: delegate=$delegateType, labels=${labelMap.size}, output=$outputDim")
+        }
+    }
+
+    private fun tryNnApi(model: MappedByteBuffer): Interpreter? = try {
+        val delegate = NnApiDelegate(
+            NnApiDelegate.Options().setAllowFp16(true).setUseNnapiCpu(false)
+        )
+        val options = Interpreter.Options().apply { addDelegate(delegate) }
+        val interp = Interpreter(model, options)
+        nnApiDelegate = delegate
+        delegateType = "nnapi"
+        interp
+    } catch (_: Exception) {
+        nnApiDelegate?.close(); nnApiDelegate = null; null
+    }
+
+    private fun tryGpu(model: MappedByteBuffer): Interpreter? = try {
+        val delegate = GpuDelegate()
+        val options = Interpreter.Options().apply { addDelegate(delegate); setNumThreads(4) }
+        val interp = Interpreter(model, options)
+        gpuDelegate = delegate
+        delegateType = "gpu"
+        interp
+    } catch (_: Exception) {
+        gpuDelegate?.close(); gpuDelegate = null; null
+    }
+
+    private fun tryCpu(model: MappedByteBuffer): Interpreter? = try {
+        val options = Interpreter.Options().apply { setNumThreads(4) }
+        delegateType = "cpu"
+        Interpreter(model, options)
+    } catch (_: Exception) { null }
 
     fun classify(bitmap: Bitmap, isFrontCamera: Boolean = false, faceData: FaceData = FaceData.EMPTY): Pair<SceneType, Float> {
         val (baseScene, baseConf) = classifyBase(bitmap, faceData)
@@ -74,6 +108,9 @@ class SceneClassifier @Inject constructor(
         return when (scene) {
             SceneType.LANDSCAPE, SceneType.MACRO, SceneType.DOCUMENT ->
                 Pair(SceneType.PORTRAIT, maxOf(confidence, 0.70f))
+            SceneType.FOOD, SceneType.ACTION ->
+                if (faceCount > 0) Pair(SceneType.PORTRAIT, maxOf(confidence, 0.70f))
+                else Pair(scene, confidence)
             SceneType.UNKNOWN ->
                 if (faceCount > 0) Pair(SceneType.PORTRAIT, maxOf(confidence, 0.70f))
                 else Pair(scene, confidence)
@@ -123,7 +160,7 @@ class SceneClassifier @Inject constructor(
     }
 
     private fun classifyHeuristic(bitmap: Bitmap, faceData: FaceData = FaceData.EMPTY): Pair<SceneType, Float> {
-        val size = 48
+        val size = 96
         val safeBitmap = if (bitmap.config == null || bitmap.colorSpace == null) {
             bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return Pair(SceneType.UNKNOWN, 0f)
         } else bitmap
@@ -264,9 +301,12 @@ class SceneClassifier @Inject constructor(
         val pixels = IntArray(inputSize * inputSize)
         bitmap.getPixels(pixels, 0, inputSize, 0, 0, inputSize, inputSize)
         for (pixel in pixels) {
-            buffer.putFloat(((pixel shr 16) and 0xFF) / 255f)
-            buffer.putFloat(((pixel shr 8) and 0xFF) / 255f)
-            buffer.putFloat((pixel and 0xFF) / 255f)
+            val r = ((pixel shr 16) and 0xFF) / 255f
+            val g = ((pixel shr 8) and 0xFF) / 255f
+            val b = (pixel and 0xFF) / 255f
+            buffer.putFloat((r - 0.485f) / 0.229f)
+            buffer.putFloat((g - 0.456f) / 0.224f)
+            buffer.putFloat((b - 0.406f) / 0.225f)
         }
         buffer.rewind()
         return buffer
@@ -302,7 +342,9 @@ class SceneClassifier @Inject constructor(
     fun release() {
         interpreter?.close()
         gpuDelegate?.close()
+        nnApiDelegate?.close()
         interpreter = null
         gpuDelegate = null
+        nnApiDelegate = null
     }
 }

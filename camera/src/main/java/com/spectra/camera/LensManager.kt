@@ -3,6 +3,7 @@ package com.spectra.camera
 import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.util.Rational
 import android.util.Size
 import com.spectra.core.model.LensId
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -11,7 +12,13 @@ import javax.inject.Singleton
 
 data class CameraSpecs(
     val megapixels: Int,
-    val aperture: Float
+    val aperture: Float,
+    val aeCompensationStep: Rational = Rational(1, 10),
+    val aeCompensationRange: android.util.Range<Int> = android.util.Range(-20, 20),
+    val isoRange: android.util.Range<Int> = android.util.Range(50, 3200),
+    val exposureTimeRange: android.util.Range<Long> = android.util.Range(1_000_000L, 1_000_000_000L),
+    val sensorArrayWidth: Int = 4000,
+    val sensorArrayHeight: Int = 3000
 )
 
 @Singleton
@@ -63,14 +70,35 @@ class LensManager @Inject constructor(
         val apertures = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES)
         val aperture = apertures?.firstOrNull() ?: 2.0f
 
-        return CameraSpecs(megapixels = mp, aperture = aperture)
+        val aeStep = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+            ?: Rational(1, 10)
+        val aeRange = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+            ?: android.util.Range(-20, 20)
+
+        val isoRange = chars.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
+            ?: android.util.Range(50, 3200)
+        val exposureTimeRange = chars.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
+            ?: android.util.Range(1_000_000L, 1_000_000_000L)
+
+        val sensorArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+
+        return CameraSpecs(
+            megapixels = mp,
+            aperture = aperture,
+            aeCompensationStep = aeStep,
+            aeCompensationRange = aeRange,
+            isoRange = isoRange,
+            exposureTimeRange = exposureTimeRange,
+            sensorArrayWidth = sensorArray?.width() ?: 4000,
+            sensorArrayHeight = sensorArray?.height() ?: 3000
+        )
     }
 
     private fun matchFocalToLens(focalLength: Float): LensId? = when {
-        focalLength < 3f -> LensId.ULTRAWIDE
-        focalLength in 3f..7f -> LensId.MAIN
-        focalLength in 7f..12f -> LensId.TELEPHOTO_3X
-        focalLength > 12f -> LensId.TELEPHOTO_5X
+        focalLength < 3.0f -> LensId.ULTRAWIDE
+        focalLength in 3.0f..8.0f -> LensId.MAIN
+        focalLength in 8.0f..15.0f -> LensId.TELEPHOTO_3X
+        focalLength >= 15.0f -> LensId.TELEPHOTO_5X
         else -> null
     }
 

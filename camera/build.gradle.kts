@@ -22,6 +22,10 @@ android {
         jvmTarget = "17"
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     androidResources {
         noCompress += "tflite"
     }
@@ -47,4 +51,5 @@ dependencies {
     testImplementation(libs.truth)
     testImplementation(libs.mockk)
     testImplementation(libs.coroutines.test)
+    testImplementation("org.robolectric:robolectric:4.12.2")
 }

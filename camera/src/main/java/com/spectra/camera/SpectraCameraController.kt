@@ -63,6 +63,10 @@ class SpectraCameraController @Inject constructor(
     private var lifecycleOwner: LifecycleOwner? = null
     private var previewView: PreviewView? = null
     private val analysisExecutor = Executors.newSingleThreadExecutor()
+    val capabilityMatrix: CameraCapabilityMatrix by lazy {
+        val cm = context.getSystemService(Context.CAMERA_SERVICE) as android.hardware.camera2.CameraManager
+        CameraCapabilityMatrix(cm)
+    }
 
     private val _videoEvent = MutableSharedFlow<VideoRecordEvent>(extraBufferCapacity = 1)
     val videoEvent: SharedFlow<VideoRecordEvent> = _videoEvent.asSharedFlow()
@@ -78,6 +82,8 @@ class SpectraCameraController @Inject constructor(
 
     private val _sensorMetadata = MutableStateFlow(SensorMetadata())
     val sensorMetadata: StateFlow<SensorMetadata> = _sensorMetadata.asStateFlow()
+
+    private var captureMegapixels: Int = 12
 
     private val _zoomRatio = MutableStateFlow(1f)
     val zoomRatio: StateFlow<Float> = _zoomRatio.asStateFlow()
@@ -112,13 +118,20 @@ class SpectraCameraController @Inject constructor(
             val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0
             val exposureNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L
             val focusDiopters = result.get(CaptureResult.LENS_FOCUS_DISTANCE) ?: 0f
+            val aperture = result.get(CaptureResult.LENS_APERTURE) ?: 1.7f
             val gains = result.get(CaptureResult.COLOR_CORRECTION_GAINS)
             val ctK = if (gains != null) {
                 val rGain = gains.red
                 val bGain = gains.blue
                 estimateCtFromGains(rGain, bGain)
             } else 0
-            _sensorMetadata.value = SensorMetadata(iso, exposureNs, focusDiopters, ctK)
+            val lux = if (iso > 0 && exposureNs > 0) {
+                val exposureSec = exposureNs / 1_000_000_000.0
+                val nSquared = (aperture * aperture).toDouble()
+                val ev100 = kotlin.math.log2(nSquared * 100.0 / (iso * exposureSec))
+                (2.5 * Math.pow(2.0, ev100)).toFloat().coerceIn(0f, 200_000f)
+            } else -1f
+            _sensorMetadata.value = SensorMetadata(iso, exposureNs, focusDiopters, ctK, lux)
         }
     }
 
@@ -184,6 +197,12 @@ class SpectraCameraController @Inject constructor(
         cam.cameraControl.startFocusAndMetering(action)
     }
 
+    private val _focusConfidence = MutableStateFlow(1f)
+    val focusConfidence: StateFlow<Float> = _focusConfidence.asStateFlow()
+
+    private val _eyeFocusActive = MutableStateFlow(false)
+    val eyeFocusActive: StateFlow<Boolean> = _eyeFocusActive.asStateFlow()
+
     fun focusOnFace(normalizedX: Float, normalizedY: Float) {
         if (_aeAfLocked.value) return
         val view = previewView ?: return
@@ -195,7 +214,36 @@ class SpectraCameraController @Inject constructor(
         val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
             .setAutoCancelDuration(3, TimeUnit.SECONDS)
             .build()
+        cam.cameraControl.startFocusAndMetering(action).addListener({
+            try {
+                _focusConfidence.value = 1f
+            } catch (_: Exception) {
+                _focusConfidence.value = 0.5f
+            }
+        }, java.util.concurrent.Executors.newSingleThreadExecutor())
+    }
+
+    fun focusOnEye(eyeX: Float, eyeY: Float) {
+        if (_aeAfLocked.value) return
+        val view = previewView ?: return
+        val cam = camera ?: return
+        val pixelX = eyeX * view.width
+        val pixelY = eyeY * view.height
+        val factory = view.meteringPointFactory
+        val point = factory.createPoint(pixelX, pixelY)
+        val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF)
+            .setAutoCancelDuration(3, TimeUnit.SECONDS)
+            .build()
         cam.cameraControl.startFocusAndMetering(action)
+        _eyeFocusActive.value = true
+        _focusConfidence.value = 1f
+    }
+
+    fun lockAeAf() {
+        val view = previewView ?: return
+        val w = view.width.toFloat()
+        val h = view.height.toFloat()
+        if (w > 0 && h > 0) lockAeAf(w / 2f, h / 2f) else _aeAfLocked.value = true
     }
 
     fun lockAeAf(x: Float, y: Float) {
@@ -251,7 +299,8 @@ class SpectraCameraController @Inject constructor(
             .also { it.surfaceProvider = view.surfaceProvider }
 
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setTargetResolution(Size(4032, 3024))
             .setTargetRotation(rotation)
             .setFlashMode(ImageCapture.FLASH_MODE_OFF)
             .build()
@@ -307,8 +356,18 @@ class SpectraCameraController @Inject constructor(
             .build()
             .also { it.surfaceProvider = view.surfaceProvider }
 
+        val captureSize = try {
+            capabilityMatrix.selectCaptureSize(cameraId ?: "0", captureMegapixels)
+        } catch (_: Exception) {
+            when (captureMegapixels) {
+                50 -> Size(8160, 6120)
+                else -> Size(4032, 3024)
+            }
+        }
+        Log.d("SpectraCameraController", "Selected capture size: ${captureSize.width}x${captureSize.height} for ${captureMegapixels}MP")
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setTargetResolution(captureSize)
             .setTargetRotation(rotation)
             .setFlashMode(ImageCapture.FLASH_MODE_OFF)
             .build()
@@ -323,11 +382,20 @@ class SpectraCameraController @Inject constructor(
         imageAnalysis = analysisBuilder.build()
             .also { it.setAnalyzer(analysisExecutor, frameProvider) }
 
+        if (cameraId != null) {
+            try {
+                val canSupport = capabilityMatrix.canSupportStreamCombo(cameraId, needsRaw = false, needsAnalysis = true)
+                if (!canSupport) {
+                    Log.w("SpectraCamera", "Stream combo preview+still+analysis may not be supported on $cameraId")
+                }
+            } catch (_: Exception) {}
+        }
+
         try {
             camera = provider.bindToLifecycle(owner, cameraSelector, preview, imageCapture, imageAnalysis)
             updateZoomBounds()
             _isReady.value = true
-            Log.d("SpectraCamera", "bindCamera: success")
+            Log.d("SpectraCamera", "bindCamera: success, capture=${captureSize.width}x${captureSize.height}")
         } catch (e: Exception) {
             Log.e("SpectraCamera", "bindCamera: failed", e)
         }
@@ -349,22 +417,42 @@ class SpectraCameraController @Inject constructor(
     fun getCamera(): Camera? = camera
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
-    fun applySettings(settings: com.spectra.core.model.CameraSettings, manual: Boolean = false, motionLevel: Int = 0, semiAuto: Boolean = false) {
+    fun setCaptureResolution(megapixels: Int) {
+        captureMegapixels = megapixels
+        if (_isFrontCamera.value) return
+        val currentLens = _activeLens.value
+        bindCamera(currentLens)
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    fun applySettings(settings: com.spectra.core.model.CameraSettings, manual: Boolean = false, motionLevel: Int = 0, semiAuto: Boolean = false, constraints: com.spectra.core.model.CameraConstraints? = null) {
         val cam = camera ?: return
+        val cameraId = lensManager.getCameraId(_activeLens.value)
+        val specs = lensManager.getSpecs(cameraId)
         when {
             manual -> settingsApplier.applyManual(cam, settings)
-            semiAuto -> settingsApplier.applySemiAuto(cam, settings)
-            else -> {
-                val currentIso = _sensorMetadata.value.iso
-                settingsApplier.applyAutoWithHints(cam, settings, motionLevel, currentIso)
-            }
+            constraints != null -> settingsApplier.applyAutoWithConstraints(
+                cam, settings, constraints, motionLevel,
+                aeCompensationStep = specs.aeCompensationStep,
+                aeCompensationRange = specs.aeCompensationRange
+            )
+            semiAuto -> settingsApplier.applySemiAuto(
+                cam, settings, specs.isoRange, specs.exposureTimeRange
+            )
+            else -> settingsApplier.applyAutoWithHints(
+                cam, settings, motionLevel,
+                aeCompensationStep = specs.aeCompensationStep,
+                aeCompensationRange = specs.aeCompensationRange
+            )
         }
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
     fun applyFaceMetering(faceRects: List<android.graphics.RectF>) {
         val cam = camera ?: return
-        settingsApplier.applyFaceMetering(cam, faceRects)
+        val cameraId = lensManager.getCameraId(_activeLens.value)
+        val specs = lensManager.getSpecs(cameraId)
+        settingsApplier.applyFaceMetering(cam, faceRects, specs.sensorArrayWidth, specs.sensorArrayHeight)
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
@@ -382,6 +470,40 @@ class SpectraCameraController @Inject constructor(
             whiteBalanceKelvin = _sensorMetadata.value.colorTemperatureK.takeIf { it > 0 } ?: 5500
         )
         settingsApplier.applyManual(cam, settings)
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    fun setManualFocusDistance(distanceMeters: Float) {
+        val cam = camera ?: return
+        val camera2Control = androidx.camera.camera2.interop.Camera2CameraControl.from(cam.cameraControl)
+        val builder = androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
+        if (distanceMeters > 0f) {
+            builder.setCaptureRequestOption(
+                android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE,
+                android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE_OFF
+            )
+            builder.setCaptureRequestOption(
+                android.hardware.camera2.CaptureRequest.LENS_FOCUS_DISTANCE,
+                1f / distanceMeters
+            )
+        } else {
+            builder.setCaptureRequestOption(
+                android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE,
+                android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+            )
+        }
+        camera2Control.captureRequestOptions = builder.build()
+    }
+
+    fun applyEvCompensation(evSteps: Int) {
+        val cam = camera ?: return
+        val cameraId = lensManager.getCameraId(_activeLens.value)
+        val specs = lensManager.getSpecs(cameraId)
+        try {
+            cam.cameraControl.setExposureCompensationIndex(
+                evSteps.coerceIn(specs.aeCompensationRange.lower, specs.aeCompensationRange.upper)
+            )
+        } catch (_: Exception) { }
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
@@ -417,7 +539,8 @@ class SpectraCameraController @Inject constructor(
         videoCapture = VideoCapture.withOutput(recorder)
 
         imageCapture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setTargetResolution(Size(4032, 3024))
             .setTargetRotation(rotation)
             .build()
 
@@ -433,6 +556,7 @@ class SpectraCameraController @Inject constructor(
 
         try {
             camera = provider.bindToLifecycle(owner, cameraSelector, preview, videoCapture, imageCapture, imageAnalysis)
+            enableVideoStabilization()
             updateZoomBounds()
             _isReady.value = true
             Log.d("SpectraCamera", "bindForVideo: success")
@@ -440,12 +564,25 @@ class SpectraCameraController @Inject constructor(
             Log.e("SpectraCamera", "bindForVideo: failed, trying without analysis", e)
             try {
                 camera = provider.bindToLifecycle(owner, cameraSelector, preview, videoCapture, imageCapture)
+                enableVideoStabilization()
                 updateZoomBounds()
                 _isReady.value = true
             } catch (e2: Exception) {
                 Log.e("SpectraCamera", "bindForVideo: failed completely", e2)
             }
         }
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    private fun enableVideoStabilization() {
+        val cam = camera ?: return
+        val camera2Control = androidx.camera.camera2.interop.Camera2CameraControl.from(cam.cameraControl)
+        val builder = androidx.camera.camera2.interop.CaptureRequestOptions.Builder()
+        builder.setCaptureRequestOption(
+            android.hardware.camera2.CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
+            android.hardware.camera2.CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
+        )
+        camera2Control.captureRequestOptions = builder.build()
     }
 
     @androidx.annotation.OptIn(androidx.camera.video.ExperimentalPersistentRecording::class)
@@ -495,9 +632,35 @@ class SpectraCameraController @Inject constructor(
         }
     }
 
+    private var rawCaptureHelper: RawCaptureHelper? = null
+
+    fun supportsRaw(): Boolean {
+        val cameraId = lensManager.getCameraId(_activeLens.value) ?: return false
+        if (rawCaptureHelper == null) rawCaptureHelper = RawCaptureHelper(context)
+        return rawCaptureHelper?.supportsRaw(cameraId) == true
+    }
+
+    suspend fun captureDng(): String {
+        val cameraId = lensManager.getCameraId(_activeLens.value)
+            ?: throw IllegalStateException("No camera ID for active lens")
+        if (rawCaptureHelper == null) rawCaptureHelper = RawCaptureHelper(context)
+        cameraProvider?.unbindAll()
+        return try {
+            rawCaptureHelper!!.captureDng(cameraId)
+        } finally {
+            val lo = lifecycleOwner
+            val pv = previewView
+            if (lo != null && pv != null) {
+                initialize(lo, pv)
+            }
+        }
+    }
+
     fun release() {
         orientationListener.disable()
         cameraProvider?.unbindAll()
+        rawCaptureHelper?.release()
+        rawCaptureHelper = null
         _isReady.value = false
     }
 
