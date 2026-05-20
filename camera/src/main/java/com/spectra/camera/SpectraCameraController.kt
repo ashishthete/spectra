@@ -397,6 +397,10 @@ class SpectraCameraController @Inject constructor(
         try {
             camera = provider.bindToLifecycle(owner, cameraSelector, preview, imageCapture, imageAnalysis)
             updateZoomBounds()
+            if (lens == LensId.MAIN && !_isFrontCamera.value) {
+                camera?.cameraControl?.setZoomRatio(1.04f)
+                _zoomRatio.value = 1.04f
+            }
             _isReady.value = true
             Log.d("SpectraCamera", "bindCamera: success, capture=${captureSize.width}x${captureSize.height}")
         } catch (e: Exception) {
@@ -428,7 +432,14 @@ class SpectraCameraController @Inject constructor(
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
-    fun applySettings(settings: com.spectra.core.model.CameraSettings, manual: Boolean = false, motionLevel: Int = 0, semiAuto: Boolean = false, constraints: com.spectra.core.model.CameraConstraints? = null) {
+    fun applySettings(
+        settings: com.spectra.core.model.CameraSettings,
+        manual: Boolean = false,
+        motionLevel: Int = 0,
+        semiAuto: Boolean = false,
+        constraints: com.spectra.core.model.CameraConstraints? = null,
+        highlightProtection: Float = 0f
+    ) {
         val cam = camera ?: return
         val cameraId = lensManager.getCameraId(_activeLens.value)
         val specs = lensManager.getSpecs(cameraId)
@@ -437,7 +448,8 @@ class SpectraCameraController @Inject constructor(
             constraints != null -> settingsApplier.applyAutoWithConstraints(
                 cam, settings, constraints, motionLevel,
                 aeCompensationStep = specs.aeCompensationStep,
-                aeCompensationRange = specs.aeCompensationRange
+                aeCompensationRange = specs.aeCompensationRange,
+                highlightProtection = highlightProtection
             )
             semiAuto -> settingsApplier.applySemiAuto(
                 cam, settings, specs.isoRange, specs.exposureTimeRange
@@ -445,7 +457,8 @@ class SpectraCameraController @Inject constructor(
             else -> settingsApplier.applyAutoWithHints(
                 cam, settings, motionLevel,
                 aeCompensationStep = specs.aeCompensationStep,
-                aeCompensationRange = specs.aeCompensationRange
+                aeCompensationRange = specs.aeCompensationRange,
+                highlightProtection = highlightProtection
             )
         }
     }
@@ -470,9 +483,19 @@ class SpectraCameraController @Inject constructor(
         val settings = com.spectra.core.model.CameraSettings(
             iso = iso,
             shutterSpeedDenominator = if (exposureNs > 0) (1_000_000_000L / exposureNs).toInt().coerceIn(1, 32000) else 125,
-            whiteBalanceKelvin = _sensorMetadata.value.colorTemperatureK.takeIf { it > 0 } ?: 5500
+            whiteBalanceKelvin = 5500
         )
         settingsApplier.applyManual(cam, settings)
+    }
+
+    fun applyBracketEv(evOffset: Float) {
+        val cam = camera ?: return
+        settingsApplier.applyBracketEv(cam, evOffset)
+    }
+
+    fun unlockAwb() {
+        val cam = camera ?: return
+        settingsApplier.unlockAwb(cam)
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop

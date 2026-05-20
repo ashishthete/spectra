@@ -46,6 +46,14 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material3.Icon
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.spectra.app.ui.theme.HudColors
@@ -80,7 +88,7 @@ fun ReviewOverlay(
             )
 
             Text(
-                text = "BEST OF 5",
+                text = "BEST SHOT",
                 color = HudColors.accent,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
@@ -101,8 +109,8 @@ fun ReviewOverlay(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                ReviewButton(icon = "✕", label = "Discard", onClick = onDelete)
-                ReviewButton(icon = "✓", label = "Keep", isPrimary = true, onClick = onKeep)
+                ReviewButton(icon = Icons.Filled.Close, label = "Discard", onClick = onDelete)
+                ReviewButton(icon = Icons.Filled.Check, label = "Keep", isPrimary = true, onClick = onKeep)
             }
         }
     }
@@ -118,6 +126,7 @@ fun SmartReviewOverlay(
     onSaveEnhanced: () -> Unit,
     onSaveBoth: () -> Unit,
     onDiscard: () -> Unit,
+    onQuickSave: () -> Unit = {},
     cropSuggestions: List<com.spectra.core.model.CropSuggestionData> = emptyList(),
     modifier: Modifier = Modifier
 ) {
@@ -248,11 +257,13 @@ fun SmartReviewOverlay(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    ReviewButton(icon = "✕", label = "Discard", onClick = onDiscard)
-                    ReviewButton(icon = "◯", label = "Raw", onClick = onSaveOriginal)
+                    ReviewButton(icon = Icons.Filled.Close, label = "Discard", onClick = onDiscard)
+                    ReviewButton(icon = Icons.Filled.Image, label = "Raw", onClick = onSaveOriginal)
                     if (aiEnhancedUri != null) {
-                        ReviewButton(icon = "✦", label = "Processed", onClick = onSaveEnhanced)
-                        ReviewButton(icon = "✓✓", label = "Both", isPrimary = true, onClick = onSaveBoth)
+                        ReviewButton(icon = Icons.Filled.AutoFixHigh, label = "Processed", onClick = onSaveEnhanced)
+                        ReviewButton(icon = Icons.Filled.DoneAll, label = "Both", isPrimary = true, onClick = onSaveBoth)
+                    } else {
+                        ReviewButton(icon = Icons.Filled.Bolt, label = "Quick Save", isPrimary = true, onClick = onQuickSave)
                     }
                 }
             }
@@ -280,7 +291,7 @@ private fun EnhancingShimmer() {
 
 @Composable
 private fun ReviewButton(
-    icon: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     isPrimary: Boolean = false,
     onClick: () -> Unit
@@ -296,10 +307,11 @@ private fun ReviewButton(
                 .clip(CircleShape)
                 .background(if (isPrimary) HudColors.accent else HudColors.surfaceGlass)
         ) {
-            Text(
-                text = icon,
-                fontSize = if (isPrimary) 24.sp else 20.sp,
-                color = if (isPrimary) Color.Black else Color.White
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (isPrimary) Color.Black else Color.White,
+                modifier = Modifier.size(if (isPrimary) 28.dp else 24.dp)
             )
         }
         Spacer(modifier = Modifier.height(4.dp))

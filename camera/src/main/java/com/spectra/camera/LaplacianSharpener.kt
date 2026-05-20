@@ -9,10 +9,10 @@ object LaplacianSharpener {
 
     data class SharpParams(
         val levels: Int = 3,
-        val fineGain: Float = 1.4f,
-        val midGain: Float = 1.2f,
-        val coarseGain: Float = 1.0f,
-        val noiseThreshold: Float = 4f,
+        val fineGain: Float = 1.9f,
+        val midGain: Float = 1.5f,
+        val coarseGain: Float = 1.15f,
+        val noiseThreshold: Float = 7f,
         val edgeAware: Boolean = true,
         val edgeProtectStrength: Float = 0.7f
     ) {
@@ -22,12 +22,12 @@ object LaplacianSharpener {
                     fineGain = 1.0f, midGain = 1.0f, coarseGain = 1.0f
                 )
                 if (iso > 1600) return SharpParams(
-                    fineGain = 1.1f, midGain = 1.1f, coarseGain = 1.0f,
-                    noiseThreshold = 8f
+                    fineGain = 1.2f, midGain = 1.15f, coarseGain = 1.0f,
+                    noiseThreshold = 10f
                 )
                 if (iso > 800) return SharpParams(
-                    fineGain = 1.2f, midGain = 1.15f, coarseGain = 1.0f,
-                    noiseThreshold = 6f
+                    fineGain = 1.5f, midGain = 1.3f, coarseGain = 1.05f,
+                    noiseThreshold = 8f
                 )
                 return SharpParams()
             }

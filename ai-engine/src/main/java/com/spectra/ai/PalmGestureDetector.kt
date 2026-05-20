@@ -34,9 +34,9 @@ class PalmGestureDetector @Inject constructor(
     private var lastPalmMs = 0L
     private var fistStartMs = 0L
     private var lastFistMs = 0L
-    private val palmRequiredMs = 5000L
-    private val fistRequiredMs = 2000L
-    private val gapToleranceMs = 1000L
+    private val palmRequiredMs = 2000L
+    private val fistRequiredMs = 1500L
+    private val gapToleranceMs = 800L
 
     fun initialize() {
         try {

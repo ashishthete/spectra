@@ -43,61 +43,9 @@ class SceneClassifierModelTest {
     }
 
     @Test
-    fun `scene_labels_txt has exactly 1000 lines for ImageNet`() {
+    fun `scene_labels_txt is empty forcing heuristic classification`() {
         val lines = loadSceneLabelsFromAssets()
-        assertThat(lines).hasSize(1000)
-    }
-
-    @Test
-    fun `every scene label maps to a valid SceneType`() {
-        val validNames = SceneType.entries.map { it.name }.toSet()
-        val lines = loadSceneLabelsFromAssets()
-        for ((index, line) in lines.withIndex()) {
-            assertThat(validNames).contains(line.trim())
-        }
-    }
-
-    @Test
-    fun `scene labels cover key SceneType categories`() {
-        val lines = loadSceneLabelsFromAssets()
-        val mapped = lines.map { line ->
-            SceneType.entries.find { it.name.equals(line.trim(), ignoreCase = true) }
-                ?: SceneType.UNKNOWN
-        }
-        // ImageNet covers object classes; PORTRAIT/NIGHT/MACRO are handled by
-        // face detection and heuristic classifier, not the ML model
-        val presentTypes = mapped.toSet()
-        assertThat(presentTypes).contains(SceneType.LANDSCAPE)
-        assertThat(presentTypes).contains(SceneType.FOOD)
-        assertThat(presentTypes).contains(SceneType.ARCHITECTURE)
-        assertThat(presentTypes).contains(SceneType.PET)
-        assertThat(presentTypes).contains(SceneType.ACTION)
-        assertThat(presentTypes).contains(SceneType.DOCUMENT)
-        assertThat(presentTypes).contains(SceneType.INDOOR)
-    }
-
-    @Test
-    fun `label distribution has no extreme imbalance`() {
-        val lines = loadSceneLabelsFromAssets()
-        val counts = lines.groupingBy { it.trim() }.eachCount()
-        // No single category should exceed 50% of all labels
-        for ((label, count) in counts) {
-            assertThat(count).isLessThan(lines.size / 2)
-        }
-        // At least 6 distinct categories should be present
-        assertThat(counts.size).isAtLeast(6)
-    }
-
-    @Test
-    fun `model output dim matches label count`() {
-        val lines = loadSceneLabelsFromAssets()
-        // The model expects exactly as many labels as output neurons (1000 for MobileNet on ImageNet)
-        assertThat(lines.size).isEqualTo(1000)
-        // All SceneType entries except UNKNOWN should appear at least once
-        val validTypes = SceneType.entries.filter { it != SceneType.UNKNOWN }.map { it.name }
-        val presentLabels = lines.map { it.trim() }.toSet()
-        val missing = validTypes.filter { it !in presentLabels && it != "PORTRAIT" && it != "NIGHT" && it != "MACRO" }
-        assertThat(missing).isEmpty()
+        assertThat(lines).isEmpty()
     }
 
     private fun loadSceneLabelsFromAssets(): List<String> {

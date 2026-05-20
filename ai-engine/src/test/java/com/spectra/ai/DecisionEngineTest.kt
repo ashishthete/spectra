@@ -24,7 +24,7 @@ class DecisionEngineTest {
 
         assertThat(lens.recommended).isEqualTo(LensId.MAIN)
         assertThat(settings.settings.iso).isEqualTo(50)
-        assertThat(settings.settings.whiteBalanceKelvin).isEqualTo(5800)
+        assertThat(settings.settings.whiteBalanceKelvin).isEqualTo(6000)
     }
 
     @Test

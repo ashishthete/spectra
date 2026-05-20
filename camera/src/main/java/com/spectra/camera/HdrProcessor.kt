@@ -20,8 +20,8 @@ class HdrProcessor {
 
     companion object {
         fun computeBracketExposures(baseExposureNs: Long, baseIso: Int): List<Pair<Long, Int>> {
-            val underExposure = (baseExposureNs / 4.0f).toLong()  // -2.0EV
-            val overExposure = (baseExposureNs * 4.0f).toLong()   // +2.0EV
+            val underExposure = (baseExposureNs / 2.83f).toLong()  // -1.5EV
+            val overExposure = (baseExposureNs * 2.83f).toLong()   // +1.5EV
             return listOf(
                 Pair(underExposure, baseIso),
                 Pair(baseExposureNs, baseIso),
@@ -79,8 +79,8 @@ class HdrProcessor {
             } else {
                 baseExposureNs
             }
-            val underExposure = (biasedBase / 4.0f).toLong()  // -2.0EV
-            val overExposure = (biasedBase * 4.0f).toLong()    // +2.0EV
+            val underExposure = (biasedBase / 2.83f).toLong()  // -1.5EV
+            val overExposure = (biasedBase * 2.83f).toLong()    // +1.5EV
             return listOf(
                 Pair(underExposure, baseIso),
                 Pair(biasedBase, baseIso),

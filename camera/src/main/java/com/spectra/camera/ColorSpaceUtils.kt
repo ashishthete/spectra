@@ -52,7 +52,11 @@ object ColorSpaceUtils {
     }
 
     fun isSkinPixelYCbCr(cb: Int, cr: Int): Boolean {
-        return cb in 70..135 && cr in 125..180
+        val cbCenter = 108f; val crCenter = 152f
+        val cbRadius = 22f; val crRadius = 28f
+        val dx = (cb - cbCenter) / cbRadius
+        val dy = (cr - crCenter) / crRadius
+        return dx * dx + dy * dy <= 1.0f
     }
 
     fun correctSkinToneLab(l: Float, a: Float, b: Float, maxDeltaE: Float = 2.0f): FloatArray {

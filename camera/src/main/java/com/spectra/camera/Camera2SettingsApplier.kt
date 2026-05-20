@@ -54,7 +54,7 @@ class Camera2SettingsApplier @Inject constructor() {
             )
             builder.setCaptureRequestOption(
                 CaptureRequest.COLOR_CORRECTION_GAINS,
-                kelvinToRggb(settings.whiteBalanceKelvin)
+                kelvinToRggbCalibrated(camera, settings.whiteBalanceKelvin)
             )
         } else {
             builder.setCaptureRequestOption(
@@ -99,7 +99,8 @@ class Camera2SettingsApplier @Inject constructor() {
         motionLevel: Int = 0,
         currentIso: Int = 0,
         aeCompensationStep: Rational = Rational(1, 10),
-        aeCompensationRange: Range<Int> = Range(-20, 20)
+        aeCompensationRange: Range<Int> = Range(-20, 20),
+        highlightProtection: Float = 0f
     ) = synchronized(lock) {
         val motionEvBias = when {
             motionLevel >= 4 && settings.shutterSpeedDenominator >= 500 -> -1.5f
@@ -107,7 +108,8 @@ class Camera2SettingsApplier @Inject constructor() {
             motionLevel >= 2 && settings.shutterSpeedDenominator >= 125 -> -0.5f
             else -> 0f
         }
-        val totalEv = settings.exposureCompensation + motionEvBias
+        val actualHighlightProtection = if (highlightProtection != 0f) highlightProtection else -0.3f
+        val totalEv = (settings.exposureCompensation + motionEvBias + actualHighlightProtection).coerceIn(-2f, 0.3f)
         val stepsPerEv = if (aeCompensationStep.toFloat() > 0f) (1.0f / aeCompensationStep.toFloat()).toInt() else 10
         val evSteps = (totalEv * stepsPerEv).toInt().coerceIn(aeCompensationRange.lower, aeCompensationRange.upper)
         try {
@@ -130,35 +132,18 @@ class Camera2SettingsApplier @Inject constructor() {
                 CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
             )
 
-        if (motionLevel >= 3) {
-            builder.setCaptureRequestOption(
-                CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-                Range(24, 30)
-            )
-        }
+        // Query smooth target FPS range that respects motion rules
+        val smoothFps = getSmoothFpsRange(camera, motionLevel)
+        builder.setCaptureRequestOption(
+            CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+            smoothFps
+        )
 
-        val wbDrift = kotlin.math.abs(settings.whiteBalanceKelvin - 5500)
-        if (wbDrift > 500) {
-            builder.setCaptureRequestOption(
-                CaptureRequest.CONTROL_AWB_MODE,
-                CaptureRequest.CONTROL_AWB_MODE_OFF
-            )
-            builder.setCaptureRequestOption(
-                CaptureRequest.COLOR_CORRECTION_MODE,
-                CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX
-            )
-            builder.setCaptureRequestOption(
-                CaptureRequest.COLOR_CORRECTION_GAINS,
-                kelvinToRggb(settings.whiteBalanceKelvin)
-            )
-            Log.d("SettingsApplier", "Auto-hints: EV=$evSteps(motion=$motionEvBias), WB=${settings.whiteBalanceKelvin}K(override)")
-        } else {
-            builder.setCaptureRequestOption(
-                CaptureRequest.CONTROL_AWB_MODE,
-                CaptureRequest.CONTROL_AWB_MODE_AUTO
-            )
-            Log.d("SettingsApplier", "Auto-hints: EV=$evSteps(motion=$motionEvBias), WB=auto")
-        }
+        builder.setCaptureRequestOption(
+            CaptureRequest.CONTROL_AWB_MODE,
+            CaptureRequest.CONTROL_AWB_MODE_AUTO
+        )
+        Log.d("SettingsApplier", "Auto-hints: EV=$evSteps(preset=${settings.exposureCompensation},motion=$motionEvBias,protect=$actualHighlightProtection), FPS=$smoothFps, WB=auto")
 
         builder.setCaptureRequestOption(
             CaptureRequest.NOISE_REDUCTION_MODE,
@@ -173,15 +158,48 @@ class Camera2SettingsApplier @Inject constructor() {
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    fun applyBracketEv(
+        camera: Camera,
+        evOffset: Float,
+        aeCompensationStep: Rational = Rational(1, 10),
+        aeCompensationRange: Range<Int> = Range(-20, 20)
+    ) = synchronized(lock) {
+        val stepsPerEv = if (aeCompensationStep.toFloat() > 0f) (1.0f / aeCompensationStep.toFloat()).toInt() else 10
+        val evSteps = (evOffset * stepsPerEv).toInt().coerceIn(aeCompensationRange.lower, aeCompensationRange.upper)
+        try {
+            camera.cameraControl.setExposureCompensationIndex(evSteps)
+        } catch (_: Exception) { }
+
+        val camera2Control = Camera2CameraControl.from(camera.cameraControl)
+        val builder = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+        camera2Control.captureRequestOptions = builder.build()
+        Log.d("SettingsApplier", "Bracket EV: offset=$evOffset, steps=$evSteps, AWB locked")
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    fun unlockAwb(camera: Camera) = synchronized(lock) {
+        val camera2Control = Camera2CameraControl.from(camera.cameraControl)
+        val builder = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, false)
+        camera2Control.captureRequestOptions = builder.build()
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
     fun applyAutoWithConstraints(
         camera: Camera,
         settings: CameraSettings,
         constraints: com.spectra.core.model.CameraConstraints,
         motionLevel: Int = 0,
         aeCompensationStep: Rational = Rational(1, 10),
-        aeCompensationRange: Range<Int> = Range(-20, 20)
+        aeCompensationRange: Range<Int> = Range(-20, 20),
+        highlightProtection: Float = 0f
     ) = synchronized(lock) {
-        val totalEv = constraints.evTargetOffset
+        val actualHighlightProtection = if (highlightProtection != 0f) highlightProtection else -0.3f
+        val totalEv = (constraints.evTargetOffset + actualHighlightProtection).coerceIn(-2f, 0.3f)
         val stepsPerEv = if (aeCompensationStep.toFloat() > 0f) (1.0f / aeCompensationStep.toFloat()).toInt() else 10
         val evSteps = (totalEv * stepsPerEv).toInt().coerceIn(aeCompensationRange.lower, aeCompensationRange.upper)
         try {
@@ -195,31 +213,64 @@ class Camera2SettingsApplier @Inject constructor() {
             .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
             .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
 
-        // Pass boundaries to AE via TARGET_FPS_RANGE to limit exposure times indirectly
-        val fpsMax = if (constraints.minShutterSpeedDenominator > 0) {
-            constraints.minShutterSpeedDenominator.coerceIn(15, 60)
-        } else 30
-        val fpsMin = (fpsMax / 2).coerceAtLeast(15)
-        
-        builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fpsMin, fpsMax))
-
-        // We can't strictly cap ISO in pure Camera2 CONTROL_AE_MODE_ON without vendor tags, 
-        // but we apply EV offset and FPS constraints. 
-
-        val wbDrift = kotlin.math.abs(settings.whiteBalanceKelvin - 5500)
-        if (wbDrift > 500) {
-            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_OFF)
-            builder.setCaptureRequestOption(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
-            builder.setCaptureRequestOption(CaptureRequest.COLOR_CORRECTION_GAINS, kelvinToRggb(settings.whiteBalanceKelvin))
-        } else {
-            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+        // Dynamic focal-length-aware dynamic minimum shutter speed floor calculation
+        val focalLengthMm = try {
+            val c2Info = androidx.camera.camera2.interop.Camera2CameraInfo.from(camera.cameraInfo)
+            val focalLengths = c2Info.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+            focalLengths?.firstOrNull() ?: 23f
+        } catch (e: Exception) {
+            23f
         }
 
+        val cropFactor = try {
+            val c2Info = androidx.camera.camera2.interop.Camera2CameraInfo.from(camera.cameraInfo)
+            val sensorSize = c2Info.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+            if (sensorSize != null) {
+                val diag = kotlin.math.sqrt((sensorSize.width * sensorSize.width + sensorSize.height * sensorSize.height).toDouble())
+                if (diag > 0) (43.27 / diag).toFloat() else 5.5f
+            } else 5.5f
+        } catch (e: Exception) {
+            5.5f
+        }
+
+        val equivalentFocalLength = focalLengthMm * cropFactor
+        val baseShutterFloor = equivalentFocalLength.coerceIn(10f, 300f)
+        val motionScale = when (motionLevel) {
+            4 -> 4.0f
+            3 -> 2.5f
+            2 -> 1.5f
+            else -> 1.0f
+        }
+        val computedMinShutterDenominator = (baseShutterFloor * motionScale).coerceIn(30f, 1000f)
+
+        // Enforce the computed minShutterSpeedDenominator by mapping it to AE target FPS range
+        val targetMinFps = computedMinShutterDenominator.toInt().coerceIn(15, 60)
+
+        val smoothFps = try {
+            val c2Info = androidx.camera.camera2.interop.Camera2CameraInfo.from(camera.cameraInfo)
+            val ranges = c2Info.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            if (ranges != null && ranges.isNotEmpty()) {
+                var bestRange = ranges[0]
+                for (range in ranges) {
+                    if (range.upper >= targetMinFps && (bestRange.upper < targetMinFps || range.lower > bestRange.lower)) {
+                        bestRange = range
+                    }
+                }
+                bestRange
+            } else {
+                Range(targetMinFps, 30.coerceAtLeast(targetMinFps))
+            }
+        } catch (e: Exception) {
+            Range(targetMinFps, 30.coerceAtLeast(targetMinFps))
+        }
+
+        builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, smoothFps)
+        builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
         builder.setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY)
         builder.setCaptureRequestOption(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_HIGH_QUALITY)
 
         camera2Control.captureRequestOptions = builder.build()
-        Log.d("SettingsApplier", "ConstrainedAuto: EV=$evSteps, FPS=($fpsMin-$fpsMax), maxISO=${constraints.maxIso}")
+        Log.d("SettingsApplier", "ConstrainedAuto: EV=$evSteps, FPS=$smoothFps, WB=auto")
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
@@ -295,26 +346,10 @@ class Camera2SettingsApplier @Inject constructor() {
                 CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
             )
 
-        val wbDrift = kotlin.math.abs(settings.whiteBalanceKelvin - 5500)
-        if (wbDrift > 300) {
-            builder.setCaptureRequestOption(
-                CaptureRequest.CONTROL_AWB_MODE,
-                CaptureRequest.CONTROL_AWB_MODE_OFF
-            )
-            builder.setCaptureRequestOption(
-                CaptureRequest.COLOR_CORRECTION_MODE,
-                CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX
-            )
-            builder.setCaptureRequestOption(
-                CaptureRequest.COLOR_CORRECTION_GAINS,
-                kelvinToRggb(settings.whiteBalanceKelvin)
-            )
-        } else {
-            builder.setCaptureRequestOption(
-                CaptureRequest.CONTROL_AWB_MODE,
-                CaptureRequest.CONTROL_AWB_MODE_AUTO
-            )
-        }
+        builder.setCaptureRequestOption(
+            CaptureRequest.CONTROL_AWB_MODE,
+            CaptureRequest.CONTROL_AWB_MODE_AUTO
+        )
 
         builder.setCaptureRequestOption(
             CaptureRequest.NOISE_REDUCTION_MODE,
@@ -326,7 +361,7 @@ class Camera2SettingsApplier @Inject constructor() {
         )
 
         camera2Control.captureRequestOptions = builder.build()
-        Log.d("SettingsApplier", "SemiAuto: ISO=$clampedIso, exposure=${clampedExposureNs}ns, WB=${settings.whiteBalanceKelvin}K")
+        Log.d("SettingsApplier", "SemiAuto: ISO=$clampedIso, exposure=${clampedExposureNs}ns, WB=auto")
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
@@ -384,5 +419,90 @@ class Camera2SettingsApplier @Inject constructor() {
         val bGain = (gNorm / bNorm).coerceIn(0.5f, 4.0f)
 
         return RggbChannelVector(rGain, 1.0f, 1.0f, bGain)
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    private fun kelvinToRggbCalibrated(camera: Camera, kelvin: Int): RggbChannelVector {
+        val fallback = kelvinToRggb(kelvin)
+        return try {
+            val c2Info = androidx.camera.camera2.interop.Camera2CameraInfo.from(camera.cameraInfo)
+            val ct1 = c2Info.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
+            val ct2 = c2Info.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)
+            if (ct1 == null) return fallback
+
+            val t = 1000f / kelvin
+            val xc = if (kelvin <= 4000) {
+                -0.2661239f * t * t * t - 0.2343580f * t * t + 0.8776956f * t + 0.179910f
+            } else {
+                -3.0258469f * t * t * t + 2.1070379f * t * t + 0.2226347f * t + 0.240390f
+            }
+            val yc = if (kelvin <= 6000) {
+                -3.000f * xc * xc + 2.870f * xc - 0.275f
+            } else {
+                -1.4185f * xc * xc * xc - 1.359f * xc * xc + 1.185f * xc - 0.202f
+            }
+
+            val z = 1.0f - xc - yc
+            val xVal = xc / yc
+            val yVal = 1.0f
+            val zVal = z / yc
+
+            val ill1 = c2Info.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1) ?: 1.toByte()
+            val ill2 = c2Info.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2) ?: 21.toByte()
+            val k1 = if (ill1.toInt() == 1) 2856f else 6504f
+            val k2 = if (ill2.toInt() == 21) 6504f else 2856f
+            
+            val alpha = ((kelvin - k1) / (k2 - k1)).coerceIn(0f, 1f)
+            
+            val rgb = FloatArray(3)
+            for (row in 0..2) {
+                var sum = 0f
+                for (col in 0..2) {
+                    val val1 = ct1.getElement(col, row).toFloat()
+                    val val2 = ct2?.getElement(col, row)?.toFloat() ?: val1
+                    val m = val1 * (1f - alpha) + val2 * alpha
+                    val xyz = if (col == 0) xVal else if (col == 1) yVal else zVal
+                    sum += m * xyz
+                }
+                rgb[row] = sum
+            }
+
+            val rSensor = rgb[0].coerceAtLeast(0.001f)
+            val gSensor = rgb[1].coerceAtLeast(0.001f)
+            val bSensor = rgb[2].coerceAtLeast(0.001f)
+
+            val rGain = (gSensor / rSensor).coerceIn(0.5f, 4.0f)
+            val bGain = (gSensor / bSensor).coerceIn(0.5f, 4.0f)
+
+            RggbChannelVector(rGain, 1.0f, 1.0f, bGain)
+        } catch (e: Exception) {
+            fallback
+        }
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    private fun getSmoothFpsRange(camera: Camera, motionLevel: Int): Range<Int> {
+        return try {
+            val c2Info = androidx.camera.camera2.interop.Camera2CameraInfo.from(camera.cameraInfo)
+            val ranges = c2Info.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            if (ranges != null && ranges.isNotEmpty()) {
+                val minAllowedFps = if (motionLevel >= 3) 30 else 15
+                var bestRange = ranges[0]
+                for (range in ranges) {
+                    if (range.upper > bestRange.upper) {
+                        bestRange = range
+                    } else if (range.upper == bestRange.upper) {
+                        if (bestRange.lower < minAllowedFps && range.lower >= minAllowedFps) {
+                            bestRange = range
+                        }
+                    }
+                }
+                bestRange
+            } else {
+                Range(30, 30)
+            }
+        } catch (e: Exception) {
+            Range(30, 30)
+        }
     }
 }

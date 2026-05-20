@@ -40,6 +40,7 @@ fun CaptureControls(
     isFrontCamera: Boolean,
     isVideoMode: Boolean = false,
     isRecording: Boolean = false,
+    captureInProgress: Boolean = false,
     onShutterTap: () -> Unit,
     onBurstStart: () -> Unit,
     onBurstEnd: () -> Unit,
@@ -144,7 +145,8 @@ fun CaptureControls(
                 ShutterButton(
                     onTap = onShutterTap,
                     onLongPressStart = onBurstStart,
-                    onLongPressEnd = onBurstEnd
+                    onLongPressEnd = onBurstEnd,
+                    enabled = !captureInProgress
                 )
             }
 

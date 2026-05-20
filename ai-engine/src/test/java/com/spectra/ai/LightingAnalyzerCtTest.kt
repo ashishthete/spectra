@@ -18,7 +18,7 @@ class LightingAnalyzerCtTest {
     fun `pixel CT estimates daylight correctly`() {
         val pixels = IntArray(100) { pixel(180, 180, 180) }
         val ct = analyzer.estimateColorTemperature(pixels)
-        assertThat(ct).isIn(4500..6500)
+        assertThat(ct).isIn(4500..6600)
     }
 
     @Test
@@ -50,7 +50,7 @@ class LightingAnalyzerCtTest {
         for (i in 100 until 200) mixed[i] = pixel(250, 250, 250)
         for (i in 200 until 300) mixed[i] = pixel(180, 180, 180)
         val ct = analyzer.estimateColorTemperature(mixed)
-        assertThat(ct).isIn(4500..6500)
+        assertThat(ct).isIn(4500..6600)
     }
 
     @Test

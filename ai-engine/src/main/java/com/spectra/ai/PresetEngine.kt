@@ -118,7 +118,7 @@ class PresetEngine @Inject constructor() {
             iso = 800, shutterSpeedDenominator = 30, whiteBalanceKelvin = 3500, exposureCompensation = 0f
         )
         else -> CameraSettings(
-            iso = 1600, shutterSpeedDenominator = 15, whiteBalanceKelvin = 3800, exposureCompensation = 0f
+            iso = 1600, shutterSpeedDenominator = 30, whiteBalanceKelvin = 3800, exposureCompensation = 0f
         )
     }
 
@@ -269,8 +269,8 @@ class PresetEngine @Inject constructor() {
     }
 
     companion object {
-        private val FACE_PRESETS = setOf(CameraPreset.PORTRAIT)
-        private val EYE_AF_PRESETS = setOf(CameraPreset.PORTRAIT)
+        private val FACE_PRESETS = setOf(CameraPreset.PORTRAIT, CameraPreset.AUTO)
+        private val EYE_AF_PRESETS = setOf(CameraPreset.PORTRAIT, CameraPreset.AUTO)
         private val BURST_PRESETS = setOf(CameraPreset.ACTION)
         private val STABILIZE_PRESETS = setOf(CameraPreset.NIGHT, CameraPreset.MACRO)
         private val TRACKING_PRESETS = setOf(CameraPreset.ACTION)

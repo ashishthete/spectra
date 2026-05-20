@@ -30,31 +30,29 @@ class HdrProcessorTest {
     }
 
     @Test
-    fun `bracket under-exposure is approximately base divided by 4`() {
+    fun `bracket under-exposure is approximately base divided by 2_83`() {
         val baseNs = 10_000_000L
         val result = HdrProcessor.computeBracketExposures(baseNs, 200)
-        // -2.0EV = base / 4.0 = 2_500_000
-        val expected = (baseNs / 4.0f).toLong()
+        val expected = (baseNs / 2.83f).toLong()
         assertThat(result[0].first).isEqualTo(expected)
     }
 
     @Test
-    fun `bracket over-exposure is approximately base multiplied by 4`() {
+    fun `bracket over-exposure is approximately base multiplied by 2_83`() {
         val baseNs = 10_000_000L
         val result = HdrProcessor.computeBracketExposures(baseNs, 200)
-        // +2.0EV = base * 4.0 = 40_000_000
-        val expected = (baseNs * 4.0f).toLong()
+        val expected = (baseNs * 2.83f).toLong()
         assertThat(result[2].first).isEqualTo(expected)
     }
 
     @Test
-    fun `bracket spread is approximately 4 EV total`() {
+    fun `bracket spread is approximately 3 EV total`() {
         val baseNs = 10_000_000L
         val result = HdrProcessor.computeBracketExposures(baseNs, 200)
         val ratio = result[2].first.toFloat() / result[0].first.toFloat()
-        // ±2.0EV means total spread of 4EV, ratio should be 4^2 = 16.0
-        assertThat(ratio).isGreaterThan(15.0f)
-        assertThat(ratio).isLessThan(17.0f)
+        // ±1.5EV means total spread of 3EV, ratio should be 2.83^2 ≈ 8.0
+        assertThat(ratio).isGreaterThan(7.0f)
+        assertThat(ratio).isLessThan(9.0f)
     }
 
     @Test
@@ -407,13 +405,13 @@ class HdrProcessorTest {
     }
 
     @Test
-    fun `3-frame bracket spacing is approximately 2 EV`() {
+    fun `3-frame bracket spacing is approximately 1_5 EV`() {
         val baseNs = 10_000_000L
         val result = HdrProcessor.computeBracketExposures(baseNs, 200)
         val underRatio = baseNs.toFloat() / result[0].first
         val overRatio = result[2].first.toFloat() / baseNs
-        assertThat(underRatio).isWithin(0.5f).of(4.0f)
-        assertThat(overRatio).isWithin(0.5f).of(4.0f)
+        assertThat(underRatio).isWithin(0.3f).of(2.83f)
+        assertThat(overRatio).isWithin(0.3f).of(2.83f)
     }
 
     @Test
@@ -469,8 +467,8 @@ class HdrProcessorTest {
         val baseNs = 8_333_333L
         val baseIso = 100
         val result = HdrProcessor.computeBracketExposures(baseNs, baseIso)
-        assertThat(result[0].first).isEqualTo((baseNs / 4.0f).toLong())
+        assertThat(result[0].first).isEqualTo((baseNs / 2.83f).toLong())
         assertThat(result[1].first).isEqualTo(baseNs)
-        assertThat(result[2].first).isEqualTo((baseNs * 4.0f).toLong())
+        assertThat(result[2].first).isEqualTo((baseNs * 2.83f).toLong())
     }
 }

@@ -394,8 +394,6 @@ class CaptureManager @Inject constructor(
                 }
             }
 
-            // Build per-pixel motion mask: mark pixels where aligned difference exceeds threshold
-            val motionThreshold = 30
             for (row in 0 until h) {
                 for (col in 0 until w) {
                     val tx = min(col / tileSize, max(tilesX - 1, 0))
@@ -412,7 +410,12 @@ class CaptureManager @Inject constructor(
                     val j = row * w + col
                     val srcJ = srcRow * w + srcCol
 
-                    // Per-pixel motion test: skip if aligned pixel differs too much from reference
+                    val lum = refGray[j]
+                    val motionThreshold = when {
+                        lum < 40 -> 45
+                        lum < 100 -> 35
+                        else -> 25
+                    }
                     val lumDiff = abs(refGray[j] - frameGray[srcJ])
                     if (lumDiff > motionThreshold) continue
 
@@ -491,6 +494,25 @@ class CaptureManager @Inject constructor(
         else (1f - bestSad.toFloat() / secondBestSad.toFloat()).coerceIn(0f, 1f)
 
         return Triple(bestDx, bestDy, confidence)
+    }
+
+    private fun sigmaClippedMean(vals: IntArray, count: Int): Int {
+        if (count <= 2) {
+            var s = 0
+            for (i in 0 until count) s += vals[i]
+            return (s / count).coerceIn(0, 255)
+        }
+        vals.sort(0, count)
+        val median = vals[count / 2]
+        var sum = 0
+        var n = 0
+        for (i in 0 until count) {
+            if (abs(vals[i] - median) <= 40) {
+                sum += vals[i]
+                n++
+            }
+        }
+        return if (n > 0) (sum / n).coerceIn(0, 255) else median.coerceIn(0, 255)
     }
 
     private fun pickSharpestIdx(frames: List<Pair<ByteArray, Int>>): Int {
@@ -637,17 +659,24 @@ class CaptureManager @Inject constructor(
 
                 val origScore = ImageEnhancer.scoreQuality(original)
 
+                val stages = mutableListOf<String>()
+
+                if (captureIso >= 400) {
+                    try {
+                        if (faceRects.isNotEmpty() && (isPortraitMode || preset == "PORTRAIT" || preset == "PORT")) {
+                            NoiseReducer.applySkinSelective(original, captureIso, faceRects)
+                        } else {
+                            NoiseReducer.apply(original, captureIso)
+                        }
+                        stages.add("noise_reduction")
+                    } catch (_: OutOfMemoryError) { System.gc() }
+                }
+
                 val params = ImageEnhancer.EnhanceParams.forPreset(preset, captureIso, sceneContrast)
                 val enhanced = ImageEnhancer.enhance(original, params)
                 original.recycle()
 
                 val canvas = Canvas(enhanced)
-                val stages = mutableListOf<String>()
-
-                if (captureIso >= 400) {
-                    try { NoiseReducer.apply(enhanced, captureIso); stages.add("noise_reduction") }
-                    catch (_: OutOfMemoryError) { System.gc() }
-                }
 
                 if (enableNeuralDenoise && captureIso >= 800 && neuralDenoiser?.isAvailable == true) {
                     try {
@@ -751,7 +780,7 @@ class CaptureManager @Inject constructor(
                     } catch (_: OutOfMemoryError) { System.gc() }
                 }
 
-                if (style != PhotoStyle.NATURAL && captureIso < 3200) {
+                if (captureIso < 3200) {
                     try {
                         val sharpParams = LaplacianSharpener.SharpParams.forIso(captureIso)
                         LaplacianSharpener.sharpen(enhanced, sharpParams)
@@ -1133,24 +1162,21 @@ class CaptureManager @Inject constructor(
         }
 
         val validCount = alignedFrames.size
-        val sumR = IntArray(w * h)
-        val sumG = IntArray(w * h)
-        val sumB = IntArray(w * h)
-        for (pixels in alignedFrames) {
-            for (i in pixels.indices) {
-                sumR[i] += (pixels[i] shr 16) and 0xFF
-                sumG[i] += (pixels[i] shr 8) and 0xFF
-                sumB[i] += pixels[i] and 0xFF
-            }
-        }
-
         val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val outPixels = IntArray(w * h)
-        for (i in outPixels.indices) {
-            val r = (sumR[i] / validCount).coerceIn(0, 255)
-            val g = (sumG[i] / validCount).coerceIn(0, 255)
-            val b = (sumB[i] / validCount).coerceIn(0, 255)
-            outPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        val rVals = IntArray(validCount)
+        val gVals = IntArray(validCount)
+        val bVals = IntArray(validCount)
+        for (i in 0 until w * h) {
+            for (f in alignedFrames.indices) {
+                rVals[f] = (alignedFrames[f][i] shr 16) and 0xFF
+                gVals[f] = (alignedFrames[f][i] shr 8) and 0xFF
+                bVals[f] = alignedFrames[f][i] and 0xFF
+            }
+            outPixels[i] = (0xFF shl 24) or
+                    (sigmaClippedMean(rVals, validCount) shl 16) or
+                    (sigmaClippedMean(gVals, validCount) shl 8) or
+                    sigmaClippedMean(bVals, validCount)
         }
         result.setPixels(outPixels, 0, w, 0, 0, w, h)
 
@@ -1321,6 +1347,53 @@ class CaptureManager @Inject constructor(
         }
     }
 
+    suspend fun captureHdrBracketEv(
+        imageCapture: ImageCapture,
+        evOffsets: List<Float>,
+        applyEvOffset: suspend (Float) -> Unit,
+        restoreAutoExposure: suspend () -> Unit,
+        beautyLevel: Int = 0,
+        style: PhotoStyle = PhotoStyle.NATURAL,
+        isFrontCamera: Boolean = false,
+        faceRects: List<android.graphics.RectF> = emptyList(),
+        isPortraitMode: Boolean = false
+    ): HdrCaptureResult {
+        val frames = mutableListOf<Pair<ByteArray, Int>>()
+        try {
+            for (ev in evOffsets) {
+                applyEvOffset(ev)
+                delay(300)
+                try {
+                    val frame = captureInMemory(imageCapture)
+                    frames.add(frame)
+                } catch (e: Exception) {
+                    Log.w("CaptureManager", "HDR EV bracket frame failed (EV=$ev)", e)
+                }
+            }
+        } finally {
+            restoreAutoExposure()
+        }
+
+        if (frames.isEmpty()) throw androidx.camera.core.ImageCaptureException(0, "All HDR frames failed", null)
+
+        if (frames.size < 2) {
+            val uri = saveJpegToMediaStore(frames[0].first, frames[0].second, "_HDR")
+            return HdrCaptureResult(uri, CaptureResultMetadata(
+                actualFrameCount = frames.size, didBurstMerge = false, didHdr = false,
+                hdrFrameCount = 0, fallbackReason = "only ${frames.size} of ${evOffsets.size} bracket frames captured"
+            ))
+        }
+
+        val merged = withContext(Dispatchers.Default) { mergeHdrFrames(frames) }
+        val suffix = if (evOffsets.size >= 5) "_HDR5" else "_HDR"
+        val uri = saveJpegToMediaStore(merged.first, merged.second, suffix)
+        Log.d("CaptureManager", "HDR EV bracket: ${frames.size}/${evOffsets.size} frames merged")
+        return HdrCaptureResult(uri, CaptureResultMetadata(
+            actualFrameCount = frames.size, didBurstMerge = false, didHdr = true,
+            hdrFrameCount = frames.size
+        ))
+    }
+
     suspend fun captureHdrBracket(
         imageCapture: ImageCapture,
         baseExposureNs: Long,
@@ -1346,8 +1419,7 @@ class CaptureManager @Inject constructor(
         try {
             for ((exposureNs, iso) in brackets) {
                 applyBracketSettings(exposureNs, iso)
-                // Wait ~5 frames at 30fps for Camera2 manual exposure to take effect
-                delay(150)
+                delay(300)
                 try {
                     val frame = captureInMemory(imageCapture)
                     frames.add(frame)
@@ -1400,7 +1472,7 @@ class CaptureManager @Inject constructor(
         try {
             for ((exposureNs, iso) in brackets) {
                 applyBracketSettings(exposureNs, iso)
-                delay(150)
+                delay(300)
                 try {
                     val frame = captureInMemory(imageCapture)
                     frames.add(frame)

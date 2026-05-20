@@ -162,7 +162,11 @@ class SkinToneClassifier @Inject constructor() {
     private fun isSkinPixel(r: Int, g: Int, b: Int): Boolean {
         val cb = (128f - 37.797f * r / 255f - 74.203f * g / 255f + 112f * b / 255f).toInt()
         val cr = (128f + 112f * r / 255f - 93.786f * g / 255f - 18.214f * b / 255f).toInt()
-        return cb in 70..135 && cr in 125..180
+        val cbCenter = 108f; val crCenter = 152f
+        val cbRadius = 22f; val crRadius = 28f
+        val dx = (cb - cbCenter) / cbRadius
+        val dy = (cr - crCenter) / crRadius
+        return dx * dx + dy * dy <= 1.0f
     }
 
     private fun rgbToLabFast(r: Int, g: Int, b: Int): FloatArray {

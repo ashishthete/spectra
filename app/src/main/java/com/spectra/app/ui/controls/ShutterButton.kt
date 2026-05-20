@@ -40,6 +40,7 @@ fun ShutterButton(
     onTap: () -> Unit,
     onLongPressStart: () -> Unit,
     onLongPressEnd: () -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
@@ -81,8 +82,10 @@ fun ShutterButton(
             .clip(CircleShape)
             .border(2.5.dp, HudColors.accent.copy(alpha = 0.9f), CircleShape)
             .semantics { contentDescription = "Shutter" }
+            .graphicsLayer(alpha = if (enabled) 1f else 0.4f)
             .combinedClickable(
                 onClick = {
+                    if (!enabled) return@combinedClickable
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     val ringerMode = audioManager?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL
                     if (ringerMode != AudioManager.RINGER_MODE_SILENT) {
@@ -92,6 +95,7 @@ fun ShutterButton(
                     onTap()
                 },
                 onLongClick = {
+                    if (!enabled) return@combinedClickable
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onLongPressStart()
                 }

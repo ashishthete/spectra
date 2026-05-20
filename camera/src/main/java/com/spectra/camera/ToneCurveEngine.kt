@@ -74,6 +74,26 @@ object ToneCurveEngine {
         }
     }
 
+    fun sCinetoneCurve(): IntArray {
+        val xs = floatArrayOf(0f, 0.25f, 0.50f, 0.75f, 1.0f)
+        val ys = floatArrayOf(0.04f, 0.21f, 0.50f, 0.72f, 0.92f)
+        return IntArray(256) { i ->
+            val t = i / 255f
+            val seg = when {
+                t <= xs[1] -> 0
+                t <= xs[2] -> 1
+                t <= xs[3] -> 2
+                else -> 3
+            }
+            val x0 = xs[seg]; val x1 = xs[seg + 1]
+            val y0 = ys[seg]; val y1 = ys[seg + 1]
+            val frac = ((t - x0) / (x1 - x0)).coerceIn(0f, 1f)
+            val smooth = frac * frac * (3f - 2f * frac)
+            val v = y0 + (y1 - y0) * smooth
+            (v * 255f).roundToInt().coerceIn(0, 255)
+        }
+    }
+
     fun liftedCurve(floor: Int, ceiling: Int): IntArray {
         val range = (ceiling - floor).coerceAtLeast(1)
         return IntArray(256) { i ->
@@ -137,23 +157,14 @@ object ToneCurveEngine {
             }
 
             PhotoStyle.CINEMATIC -> {
-                val crushedBase = liftedCurve(20, 255)
+                val base = sCinetoneCurve()
                 val cinematicR = IntArray(256) { i ->
-                    if (i < 128) {
-                        (crushedBase[i] - 8).coerceIn(0, 255)
-                    } else {
-                        (crushedBase[i] + 6).coerceIn(0, 255)
-                    }
+                    (base[i] - 3).coerceIn(0, 255)
                 }
-                val cinematicG = crushedBase.clone()
                 val cinematicB = IntArray(256) { i ->
-                    if (i < 128) {
-                        (crushedBase[i] + 12).coerceIn(0, 255)
-                    } else {
-                        (crushedBase[i] - 4).coerceIn(0, 255)
-                    }
+                    (base[i] + 4).coerceIn(0, 255)
                 }
-                ChannelCurves(r = cinematicR, g = cinematicG, b = cinematicB)
+                ChannelCurves(r = cinematicR, g = base.clone(), b = cinematicB)
             }
         }
     }
@@ -170,7 +181,7 @@ object ToneCurveEngine {
             com.spectra.core.model.PhotoStyle.VIVID -> HighlightParams(shoulderStart = 210, maxOutput = 252, strength = 0.3f)
             com.spectra.core.model.PhotoStyle.WARM -> HighlightParams(shoulderStart = 205, maxOutput = 250, strength = 0.4f)
             com.spectra.core.model.PhotoStyle.FILM -> HighlightParams(shoulderStart = 190, maxOutput = 240, strength = 0.8f)
-            com.spectra.core.model.PhotoStyle.CINEMATIC -> HighlightParams(shoulderStart = 195, maxOutput = 242, strength = 0.7f)
+            com.spectra.core.model.PhotoStyle.CINEMATIC -> HighlightParams(shoulderStart = 178, maxOutput = 235, strength = 0.85f)
         }
     }
 

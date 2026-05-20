@@ -32,8 +32,8 @@ class DecisionEngine @Inject constructor() {
                 reason = "ACTION — fast shutter priority"
             )
             com.spectra.core.model.CameraPreset.NIGHT -> ExposureStrategy(
-                useSemiAuto = true, minShutterDenom = 8, maxIso = 6400,
-                reason = "NIGHT — long exposure, higher ISO ceiling"
+                useSemiAuto = true, minShutterDenom = 30, maxIso = 6400,
+                reason = "NIGHT — 1/30s handheld floor, higher ISO ceiling"
             )
             com.spectra.core.model.CameraPreset.LANDSCAPE -> ExposureStrategy(
                 useSemiAuto = true, minShutterDenom = 125, maxIso = 200,
@@ -158,13 +158,40 @@ class DecisionEngine @Inject constructor() {
         return SettingsProfile(distanceAdjusted, reason, constraints)
     }
 
-    /**
-     * Whether HDR bracketing should be used given the current motion level.
-     * SHAKING (FAST/VERY_FAST) causes bracket frames to misalign, producing
-     * ghosting artifacts — fall back to single-frame capture instead.
-     */
     fun shouldUseHdr(motionLevel: MotionLevel): Boolean {
         return motionLevel.ordinal < MotionLevel.FAST.ordinal
+    }
+
+    fun shouldUseHdr(analysis: SceneAnalysis): Boolean {
+        if (analysis.motionLevel.ordinal >= MotionLevel.FAST.ordinal) return false
+
+        return when (analysis.sceneType) {
+            SceneType.ACTION, SceneType.PET -> false
+            SceneType.NIGHT -> false
+            SceneType.LANDSCAPE, SceneType.ARCHITECTURE -> {
+                analysis.lighting == LightingCondition.HARSH_MIDDAY ||
+                    analysis.lighting == LightingCondition.BACKLIT ||
+                    analysis.lighting == LightingCondition.GOLDEN_HOUR ||
+                    analysis.hasSkyHighlights
+            }
+            SceneType.PORTRAIT -> {
+                analysis.lighting == LightingCondition.BACKLIT ||
+                    analysis.lighting == LightingCondition.HARSH_MIDDAY
+            }
+            SceneType.FOOD, SceneType.MACRO -> {
+                analysis.lighting == LightingCondition.BACKLIT
+            }
+            else -> {
+                when (analysis.lighting) {
+                    LightingCondition.LOW_LIGHT -> false
+                    LightingCondition.ARTIFICIAL -> false
+                    LightingCondition.BRIGHT_DAYLIGHT,
+                    LightingCondition.HARSH_MIDDAY,
+                    LightingCondition.BACKLIT -> analysis.motionLevel.ordinal <= MotionLevel.SLOW.ordinal
+                    else -> false
+                }
+            }
+        }
     }
 
     /**
@@ -181,7 +208,7 @@ class DecisionEngine @Inject constructor() {
             SceneType.ACTION, SceneType.PET -> 500
             SceneType.PORTRAIT -> 125
             SceneType.LANDSCAPE -> 60
-            SceneType.NIGHT -> 8
+            SceneType.NIGHT -> 30
             else -> 60
         }
         // Raise shutter floor when device is shaking to avoid motion blur
@@ -195,7 +222,7 @@ class DecisionEngine @Inject constructor() {
 
         // STATIONARY on night scenes: allow slower shutter floor
         val finalMinShutter = if (scene == SceneType.NIGHT && motionLevel == MotionLevel.STATIC) {
-            baseMinShutter  // keep the scene-based floor (1/8s)
+            baseMinShutter
         } else {
             minShutter
         }
@@ -233,12 +260,12 @@ class DecisionEngine @Inject constructor() {
 
     private fun landscapeSettings(lighting: LightingCondition) = when (lighting) {
         LightingCondition.GOLDEN_HOUR -> CameraSettings(
-            iso = 50, shutterSpeedDenominator = 200,
-            whiteBalanceKelvin = 5800, exposureCompensation = 0.3f
+            iso = 50, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 6000, exposureCompensation = -0.3f
         )
         LightingCondition.BLUE_HOUR -> CameraSettings(
-            iso = 200, shutterSpeedDenominator = 60,
-            whiteBalanceKelvin = 7500, exposureCompensation = 0.3f
+            iso = 100, shutterSpeedDenominator = 125,
+            whiteBalanceKelvin = 7000, exposureCompensation = 0f
         )
         LightingCondition.BRIGHT_DAYLIGHT -> CameraSettings(
             iso = 50, shutterSpeedDenominator = 500,
@@ -281,7 +308,11 @@ class DecisionEngine @Inject constructor() {
         )
         LightingCondition.LOW_LIGHT -> CameraSettings(
             iso = 400, shutterSpeedDenominator = 60,
-            whiteBalanceKelvin = 4200, exposureCompensation = 0.3f
+            whiteBalanceKelvin = 4200, exposureCompensation = 0.5f
+        )
+        LightingCondition.BACKLIT -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 5500, exposureCompensation = 1.0f
         )
         LightingCondition.ARTIFICIAL -> CameraSettings(
             iso = 200, shutterSpeedDenominator = 125,
@@ -290,14 +321,6 @@ class DecisionEngine @Inject constructor() {
         LightingCondition.STUDIO -> CameraSettings(
             iso = 100, shutterSpeedDenominator = 160,
             whiteBalanceKelvin = 5500, exposureCompensation = 0f
-        )
-        LightingCondition.BACKLIT -> CameraSettings(
-            iso = 100, shutterSpeedDenominator = 250,
-            whiteBalanceKelvin = 5500, exposureCompensation = 1.0f
-        )
-        LightingCondition.HARSH_MIDDAY -> CameraSettings(
-            iso = 50, shutterSpeedDenominator = 500,
-            whiteBalanceKelvin = 5200, exposureCompensation = 0.3f
         )
         else -> CameraSettings(
             iso = 100, shutterSpeedDenominator = 160,
@@ -308,15 +331,15 @@ class DecisionEngine @Inject constructor() {
     private fun foodSettings(lighting: LightingCondition) = when (lighting) {
         LightingCondition.BRIGHT_DAYLIGHT, LightingCondition.GOLDEN_HOUR -> CameraSettings(
             iso = 50, shutterSpeedDenominator = 200,
-            whiteBalanceKelvin = 5000, exposureCompensation = 0.7f
+            whiteBalanceKelvin = 5200, exposureCompensation = 0.7f
         )
         LightingCondition.OVERCAST -> CameraSettings(
             iso = 100, shutterSpeedDenominator = 125,
             whiteBalanceKelvin = 5800, exposureCompensation = 0.3f
         )
-        LightingCondition.ARTIFICIAL -> CameraSettings(
-            iso = 200, shutterSpeedDenominator = 100,
-            whiteBalanceKelvin = 3800, exposureCompensation = 0.3f
+        LightingCondition.ARTIFICIAL, LightingCondition.STUDIO -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 160,
+            whiteBalanceKelvin = 4500, exposureCompensation = 0.3f
         )
         LightingCondition.LOW_LIGHT -> CameraSettings(
             iso = 400, shutterSpeedDenominator = 60,
@@ -324,21 +347,17 @@ class DecisionEngine @Inject constructor() {
         )
         else -> CameraSettings(
             iso = 100, shutterSpeedDenominator = 125,
-            whiteBalanceKelvin = 4800, exposureCompensation = 0.3f
+            whiteBalanceKelvin = 5000, exposureCompensation = 0.3f
         )
     }
 
     private fun nightSettings(lighting: LightingCondition) = when (lighting) {
         LightingCondition.ARTIFICIAL -> CameraSettings(
-            iso = 1600, shutterSpeedDenominator = 30,
-            whiteBalanceKelvin = 3500, exposureCompensation = 0.3f
-        )
-        LightingCondition.LOW_LIGHT -> CameraSettings(
-            iso = 6400, shutterSpeedDenominator = 8,
-            whiteBalanceKelvin = 3800, exposureCompensation = 0.3f
+            iso = 800, shutterSpeedDenominator = 30,
+            whiteBalanceKelvin = 3500, exposureCompensation = 0f
         )
         else -> CameraSettings(
-            iso = 3200, shutterSpeedDenominator = 15,
+            iso = 1600, shutterSpeedDenominator = 30,
             whiteBalanceKelvin = 3800, exposureCompensation = 0f
         )
     }
@@ -412,6 +431,10 @@ class DecisionEngine @Inject constructor() {
             iso = 1600, shutterSpeedDenominator = 500,
             whiteBalanceKelvin = 4500, exposureCompensation = 0.3f
         )
+        LightingCondition.ARTIFICIAL -> CameraSettings(
+            iso = 400, shutterSpeedDenominator = 500,
+            whiteBalanceKelvin = 4000, exposureCompensation = 0f
+        )
         else -> CameraSettings(
             iso = 400, shutterSpeedDenominator = 1000,
             whiteBalanceKelvin = 5500, exposureCompensation = 0f
@@ -453,19 +476,26 @@ class DecisionEngine @Inject constructor() {
     }
 
     private fun autoSettings(lighting: LightingCondition) = when (lighting) {
-        LightingCondition.BRIGHT_DAYLIGHT -> CameraSettings(
-            iso = 50, shutterSpeedDenominator = 250,
-            whiteBalanceKelvin = 5300, exposureCompensation = 0f
-        )
-        LightingCondition.LOW_LIGHT -> CameraSettings(
-            iso = 800, shutterSpeedDenominator = 60,
-            whiteBalanceKelvin = 4200, exposureCompensation = 0f
+        LightingCondition.BRIGHT_DAYLIGHT, LightingCondition.HARSH_MIDDAY -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 500,
+            whiteBalanceKelvin = 5200, exposureCompensation = 0f
         )
         LightingCondition.GOLDEN_HOUR -> CameraSettings(
-            iso = 100, shutterSpeedDenominator = 200,
-            whiteBalanceKelvin = 5500, exposureCompensation = 0.3f
+            iso = 50, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 5800, exposureCompensation = 0.3f
         )
-        else -> CameraSettings(iso = 100, shutterSpeedDenominator = 125, whiteBalanceKelvin = 5500)
+        LightingCondition.LOW_LIGHT -> CameraSettings(
+            iso = 800, shutterSpeedDenominator = 125,
+            whiteBalanceKelvin = 4500, exposureCompensation = 0f
+        )
+        LightingCondition.ARTIFICIAL -> CameraSettings(
+            iso = 200, shutterSpeedDenominator = 200,
+            whiteBalanceKelvin = 4000, exposureCompensation = 0f
+        )
+        else -> CameraSettings(
+            iso = 100, shutterSpeedDenominator = 250,
+            whiteBalanceKelvin = 5500, exposureCompensation = 0f
+        )
     }
 
     private fun adjustForMotion(settings: CameraSettings, motion: MotionLevel): CameraSettings {

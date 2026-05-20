@@ -127,8 +127,9 @@ data class HudState(
 
     val cropSuggestions: List<CropSuggestionData> = emptyList(),
 
-    val palmGestureEnabled: Boolean = false,
+    val palmGestureEnabled: Boolean = true,
     val palmCountdown: Int = 0,
+    val controlsVisible: Boolean = true,
 ) {
     val isLowLight: Boolean get() = actualIso > 800 || actualShutterSpeedNs > 33_000_000L
 

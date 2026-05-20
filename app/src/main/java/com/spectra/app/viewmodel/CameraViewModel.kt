@@ -98,12 +98,18 @@ class CameraViewModel @Inject constructor(
     private var enhancementJob: Job? = null
     private var palmCountdownJob: Job? = null
     private var palmDetectionFrameCount = 0
+    private var controlsHideJob: Job? = null
 
     init {
         pipeline.initialize()
         palmGestureDetector.initialize()
         levelSensor.start()
         locationProvider.startUpdates()
+
+        controlsHideJob = viewModelScope.launch {
+            delay(5000L)
+            _hudState.update { it.copy(controlsVisible = false) }
+        }
 
         viewModelScope.launch {
             val mode = settingsStore.loadMode()
@@ -224,7 +230,8 @@ class CameraViewModel @Inject constructor(
                 hdrFrameCounter++
                 if (hdrFrameCounter % 30 == 0) {
                     val contrast = analyzeContrastFromBitmap(bitmap)
-                    val hdrActive = contrast > 0.05f
+                    val sceneAnalysis = pipeline.analysis.value
+                    val hdrActive = contrast > 0.05f && pipeline.decisionEngine.shouldUseHdr(sceneAnalysis)
                     val state = _hudState.value
                     val clipping = com.spectra.camera.ExposureAnalysis.computeHighlightClipping(bitmap)
                     if (hdrActive != state.isHdrActive || kotlin.math.abs(contrast - state.sceneContrast) > 0.02f
@@ -294,9 +301,8 @@ class CameraViewModel @Inject constructor(
                     if (mstAwbShift != 0) {
                         val currentWb = _hudState.value.settings.whiteBalanceKelvin
                         val adjustedWb = (currentWb + mstAwbShift).coerceIn(2500, 9000)
-                        val adjustedSettings = _hudState.value.settings.copy(whiteBalanceKelvin = adjustedWb)
-                        applySettingsToHardware(adjustedSettings)
-                        Log.d("CameraViewModel", "MST AWB shift: ${mstAwbShift}K, WB ${currentWb}K -> ${adjustedWb}K")
+                        _hudState.update { it.copy(settings = it.settings.copy(whiteBalanceKelvin = adjustedWb)) }
+                        Log.d("CameraViewModel", "MST AWB shift: ${mstAwbShift}K, WB ${currentWb}K -> ${adjustedWb}K (display only)")
                     }
 
                     val primary = faces.primaryFace ?: return@collect
@@ -447,12 +453,7 @@ class CameraViewModel @Inject constructor(
                     }
                     lastAppliedSettings = profile.settings
                     lastSettingsAppliedMs = now
-                    val strategy = pipeline.decisionEngine.getExposureStrategy(
-                        _hudState.value.preset, _hudState.value.sceneConfidence
-                    )
-                    val hasRecipe = _hudState.value.captureRecipe != null
-                    val forceSemiAuto = hasRecipe && _hudState.value.preset != CameraPreset.AUTO
-                    applySettingsToHardware(profile.settings, semiAuto = strategy.useSemiAuto || forceSemiAuto, constraints = profile.constraints)
+                    applySettingsToHardware(profile.settings, constraints = profile.constraints)
                 }
 
                 val currentState = _hudState.value
@@ -595,7 +596,8 @@ class CameraViewModel @Inject constructor(
                 settings.copy(iso = recipe.maxIso)
             } else settings
             val motionLevel = _hudState.value.motionLevel
-            cameraController.applySettings(clampedSettings, manual, motionLevel, semiAuto, constraints)
+            val highlightProtection = pipeline.analysis.value.highlightProtection
+            cameraController.applySettings(clampedSettings, manual, motionLevel, semiAuto, constraints, highlightProtection)
         } catch (e: Exception) {
             Log.w("CameraViewModel", "Failed to apply camera settings", e)
         }
@@ -857,6 +859,15 @@ class CameraViewModel @Inject constructor(
         _hudState.update { it.copy(isHudVisible = !it.isHudVisible) }
     }
 
+    fun showControls() {
+        _hudState.update { it.copy(controlsVisible = true) }
+        controlsHideJob?.cancel()
+        controlsHideJob = viewModelScope.launch {
+            delay(5000L)
+            _hudState.update { it.copy(controlsVisible = false) }
+        }
+    }
+
     fun toggleMiniHistogram() {
         _hudState.update { it.copy(showMiniHistogram = !it.showMiniHistogram) }
     }
@@ -1079,30 +1090,25 @@ class CameraViewModel @Inject constructor(
                         throw Exception("Thermal throttle — fallback to normal capture")
                     }
 
-                    val hdrResult = if (isStable) {
-                        captureManager.captureHdrBracket5Frame(
-                            imageCapture, baseExposureNs, baseIso,
-                            applyBracketSettings = { expNs, iso -> cameraController.applyBracketExposure(expNs, iso) },
-                            restoreAutoExposure = { cameraController.applySettings(state.settings) },
-                            beautyLevel = state.beautyLevel,
-                            style = state.photoStyle,
-                            isFrontCamera = state.isFrontCamera,
-                            faceRects = lastDetectedFaceRects,
-                            isPortraitMode = state.mode == CameraMode.PORT
-                        )
+                    val evOffsets = if (isStable) {
+                        listOf(-3.0f, -1.5f, 0f, 1.5f, 3.0f)
                     } else {
-                        captureManager.captureHdrBracket(
-                            imageCapture, baseExposureNs, baseIso,
-                            applyBracketSettings = { expNs, iso -> cameraController.applyBracketExposure(expNs, iso) },
-                            restoreAutoExposure = { cameraController.applySettings(state.settings) },
-                            beautyLevel = state.beautyLevel,
-                            style = state.photoStyle,
-                            isFrontCamera = state.isFrontCamera,
-                            faceRects = lastDetectedFaceRects,
-                            isPortraitMode = state.mode == CameraMode.PORT,
-                            evBias = evBias
-                        )
+                        listOf(-1.5f + evBias, 0f + evBias, 1.5f + evBias)
                     }
+                    val hdrResult = captureManager.captureHdrBracketEv(
+                        imageCapture,
+                        evOffsets = evOffsets,
+                        applyEvOffset = { ev -> cameraController.applyBracketEv(ev) },
+                        restoreAutoExposure = {
+                            cameraController.unlockAwb()
+                            cameraController.applySettings(state.settings)
+                        },
+                        beautyLevel = state.beautyLevel,
+                        style = state.photoStyle,
+                        isFrontCamera = state.isFrontCamera,
+                        faceRects = lastDetectedFaceRects,
+                        isPortraitMode = state.mode == CameraMode.PORT
+                    )
                     val hdrUri = hdrResult.uri
                     val hdrMeta = hdrResult.metadata
                     val hdrExplanation = buildCaptureExplanation(hdrMeta)
@@ -1110,18 +1116,18 @@ class CameraViewModel @Inject constructor(
                         lastCapturedUri = hdrUri,
                         showCaptureFlash = false,
                         isCapturing = false,
-                        showSmartReview = true,
+                        showSmartReview = false,
                         bestOriginalUri = hdrUri,
                         aiEnhancedUri = null,
                         isEnhancing = true,
                         captureExplanation = hdrExplanation,
                         showAiExplainer = false
                     )}
+                    _toastMessage.tryEmit("Photo saved")
                     val originalUri = hdrUri
                     Log.d("CameraViewModel", "HDR saved: $originalUri, starting enhancement...")
                     enhancementJob?.cancel()
                     enhancementJob = viewModelScope.launch {
-                        System.gc()
                         try {
                             val processingResult = captureManager.saveProcessedCopy(
                                 originalUri,
@@ -1207,7 +1213,7 @@ class CameraViewModel @Inject constructor(
                 lastCapturedUri = result.bestOriginalUri,
                 showCaptureFlash = false,
                 isCapturing = false,
-                showSmartReview = true,
+                showSmartReview = false,
                 bestOriginalUri = result.bestOriginalUri,
                 aiEnhancedUri = null,
                 isEnhancing = true,
@@ -1215,19 +1221,12 @@ class CameraViewModel @Inject constructor(
                 showAiExplainer = false
             )}
             _captureHaptic.tryEmit(Unit)
-
-            viewModelScope.launch {
-                delay(500)
-                _hudState.update { it.copy(showAiExplainer = true) }
-                delay(2000)
-                _hudState.update { it.copy(showAiExplainer = false) }
-            }
+            _toastMessage.tryEmit("Photo saved")
 
             val originalUri = result.bestOriginalUri
             Log.d("CameraViewModel", "Original saved: $originalUri, starting enhancement...")
             enhancementJob?.cancel()
             enhancementJob = viewModelScope.launch {
-                System.gc()
                 try {
                     val processingResult = captureManager.saveProcessedCopy(
                         originalUri,
@@ -1282,12 +1281,10 @@ class CameraViewModel @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e("CameraViewModel", "Capture failed", e)
-            _toastMessage.tryEmit("Capture failed: ${e.message}")
             _hudState.update { it.copy(showCaptureFlash = false, isCapturing = false) }
         } catch (oom: OutOfMemoryError) {
             Log.e("CameraViewModel", "OOM during capture", oom)
             System.gc()
-            _toastMessage.tryEmit("Out of memory — try again")
             _hudState.update { it.copy(showCaptureFlash = false, isCapturing = false) }
         } finally {
             _captureInProgress.value = false
@@ -1335,6 +1332,18 @@ class CameraViewModel @Inject constructor(
     fun saveBoth() {
         _toastMessage.tryEmit("Both saved")
         dismissSmartReview()
+    }
+
+    fun quickSave() {
+        _toastMessage.tryEmit("Saved — processing in background")
+        smartCaptureFrames = null
+        _hudState.update { it.copy(
+            showSmartReview = false,
+            bestOriginalUri = null,
+            isEnhancing = false,
+            captureExplanation = null,
+            showAiExplainer = false
+        )}
     }
 
     fun discardSmartCapture() {

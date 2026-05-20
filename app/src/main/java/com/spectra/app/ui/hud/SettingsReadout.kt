@@ -38,7 +38,7 @@ fun SettingsReadout(
         Text(
             text = "f/${"%.1f".format(aperture)}",
             color = HudColors.textSecondary,
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontFamily = FontFamily.Monospace,
             textAlign = TextAlign.End
         )
@@ -46,14 +46,14 @@ fun SettingsReadout(
             Text(
                 text = "${settings.formattedIso} · ${settings.formattedShutterSpeed}",
                 color = HudColors.accent.copy(alpha = 0.7f),
-                fontSize = 9.sp,
+                fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.End
             )
             Text(
                 text = settings.formattedWb,
                 color = HudColors.accent.copy(alpha = 0.5f),
-                fontSize = 9.sp,
+                fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.End
             )
@@ -61,7 +61,7 @@ fun SettingsReadout(
             Text(
                 text = "AI AUTO",
                 color = HudColors.accent,
-                fontSize = 8.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.End
@@ -74,7 +74,7 @@ fun SettingsReadout(
                 Text(
                     text = "ISO $actualIso · $shutterText",
                     color = HudColors.accent.copy(alpha = 0.7f),
-                    fontSize = 9.sp,
+                    fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     textAlign = TextAlign.End
                 )
@@ -82,7 +82,7 @@ fun SettingsReadout(
                     Text(
                         text = "${actualColorTemperature}K",
                         color = HudColors.accent.copy(alpha = 0.5f),
-                        fontSize = 9.sp,
+                        fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
                         textAlign = TextAlign.End
                     )
@@ -91,7 +91,7 @@ fun SettingsReadout(
                 Text(
                     text = "${aiRecommendedSettings.formattedIso} · ${aiRecommendedSettings.formattedShutterSpeed}",
                     color = HudColors.textMuted.copy(alpha = 0.5f),
-                    fontSize = 9.sp,
+                    fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     textAlign = TextAlign.End
                 )
@@ -100,7 +100,7 @@ fun SettingsReadout(
             Text(
                 text = "AUTO",
                 color = HudColors.textSecondary,
-                fontSize = 8.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.End
@@ -113,7 +113,7 @@ fun SettingsReadout(
             Text(
                 text = "ISO $actualIso · $shutterText",
                 color = HudColors.textSecondary,
-                fontSize = 9.sp,
+                fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.End
             )
@@ -128,7 +128,7 @@ fun SettingsReadout(
                 Text(
                     text = "AI: ${aiRecommendedSettings.formattedIso} · ${aiRecommendedSettings.formattedShutterSpeed}",
                     color = HudColors.textMuted.copy(alpha = 0.5f),
-                    fontSize = 9.sp,
+                    fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     textAlign = TextAlign.End
                 )
@@ -138,7 +138,7 @@ fun SettingsReadout(
                 Text(
                     text = "${actualColorTemperature}K",
                     color = HudColors.textMuted.copy(alpha = 0.7f),
-                    fontSize = 9.sp,
+                    fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     textAlign = TextAlign.End
                 )

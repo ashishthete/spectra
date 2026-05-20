@@ -382,11 +382,45 @@ class DepthBokeh {
 
         for (level in 1 until levels) {
             val radius = baseRadius * level
-            val blurred = gaussianBlurSeparable(pixels, w, h, radius)
+            val blurred = hexagonalBlur(pixels, w, h, radius)
             pyramid.add(blurred)
         }
 
         return pyramid
+    }
+
+    private fun hexagonalBlur(pixels: IntArray, w: Int, h: Int, radius: Int): IntArray {
+        val r = radius.coerceAtLeast(1)
+        val pass1 = directionalBlur(pixels, w, h, r, 1f, 0f)
+        val cos60 = 0.5f
+        val sin60 = 0.866f
+        val pass2 = directionalBlur(pass1, w, h, r, cos60, sin60)
+        return directionalBlur(pass2, w, h, r, cos60, -sin60)
+    }
+
+    private fun directionalBlur(pixels: IntArray, w: Int, h: Int, radius: Int, dirX: Float, dirY: Float): IntArray {
+        val n = w * h
+        val result = IntArray(n)
+        val kernel = buildGaussianKernel1D(radius)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                var sumR = 0f; var sumG = 0f; var sumB = 0f
+                for (k in -radius..radius) {
+                    val sx = (x + (k * dirX).toInt()).coerceIn(0, w - 1)
+                    val sy = (y + (k * dirY).toInt()).coerceIn(0, h - 1)
+                    val p = pixels[sy * w + sx]
+                    val weight = kernel[k + radius]
+                    sumR += ((p shr 16) and 0xFF) * weight
+                    sumG += ((p shr 8) and 0xFF) * weight
+                    sumB += (p and 0xFF) * weight
+                }
+                result[y * w + x] = (0xFF shl 24) or
+                    (sumR.toInt().coerceIn(0, 255) shl 16) or
+                    (sumG.toInt().coerceIn(0, 255) shl 8) or
+                    sumB.toInt().coerceIn(0, 255)
+            }
+        }
+        return result
     }
 
     fun guidedFilterCoefficients(guide: FloatArray, input: FloatArray, w: Int, h: Int, radius: Int, eps: Float): Pair<FloatArray, FloatArray> {

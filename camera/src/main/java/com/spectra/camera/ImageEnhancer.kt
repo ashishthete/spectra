@@ -12,70 +12,86 @@ object ImageEnhancer {
     data class EnhanceParams(
         val guidedFilterRadius: Int = 16,
         val guidedFilterEps: Float = 0.04f,
-        val baseCompression: Float = 1.3f,
-        val detailBoost: Float = 1.1f,
-        val vibranceAmount: Float = 0.08f,
+        val baseCompression: Float = 1.35f,
+        val detailBoost: Float = 1.15f,
+        val vibranceAmount: Float = 0.15f,
         val saturationScale: Float = 0.6f,
+        val contrastCurveStrength: Float = 0.25f,
         val iso: Int = 100,
         val warmthShift: Float = 0f,
         val brightnessBoost: Float = 0f,
-        val shadowProtection: Float = 0.3f
+        val shadowProtection: Float = 0.3f,
+        val hslStrength: Float = 0f
     ) {
         companion object {
             fun forPreset(preset: String, iso: Int = 100, sceneContrast: Float = 0f): EnhanceParams {
                 return when (preset) {
                     "AUTO" -> EnhanceParams(
-                        baseCompression = if (sceneContrast > 0.25f) 1.5f else 1.3f,
-                        detailBoost = 1.1f,
-                        vibranceAmount = 0.10f,
+                        baseCompression = if (sceneContrast > 0.25f) 1.5f else 1.35f,
+                        detailBoost = 1.15f,
+                        vibranceAmount = 0.15f,
+                        contrastCurveStrength = 0.25f,
                         shadowProtection = 0.3f,
+                        hslStrength = 0.4f,
                         iso = iso
                     )
                     "PORTRAIT", "PORT" -> EnhanceParams(
-                        baseCompression = 1.2f,
-                        detailBoost = 1.05f,
-                        vibranceAmount = 0.06f,
+                        baseCompression = 1.15f,
+                        detailBoost = 1.02f,
+                        vibranceAmount = 0.08f,
+                        contrastCurveStrength = 0.15f,
                         warmthShift = 0.06f,
                         shadowProtection = 0.25f,
+                        hslStrength = 0.6f,
                         iso = iso
                     )
                     "NIGHT", "NGHT" -> EnhanceParams(
-                        baseCompression = 1.6f,
-                        detailBoost = 1.05f,
-                        vibranceAmount = 0.18f,
+                        baseCompression = 1.5f,
+                        detailBoost = 1.08f,
+                        vibranceAmount = 0.12f,
+                        contrastCurveStrength = 0.20f,
                         warmthShift = -0.04f,
                         shadowProtection = 0.5f,
+                        hslStrength = 0.3f,
                         iso = iso
                     )
                     "FOOD" -> EnhanceParams(
-                        baseCompression = 1.4f,
-                        detailBoost = 1.2f,
-                        vibranceAmount = 0.15f,
+                        baseCompression = 1.35f,
+                        detailBoost = 1.20f,
+                        vibranceAmount = 0.17f,
+                        contrastCurveStrength = 0.25f,
                         warmthShift = 0.08f,
                         brightnessBoost = 0.12f,
                         shadowProtection = 0.2f,
+                        hslStrength = 0.5f,
                         iso = iso
                     )
                     "LANDSCAPE", "LNDS" -> EnhanceParams(
-                        baseCompression = 1.6f,
+                        baseCompression = 1.45f,
                         detailBoost = 1.15f,
-                        vibranceAmount = 0.14f,
+                        vibranceAmount = 0.18f,
+                        contrastCurveStrength = 0.30f,
                         warmthShift = -0.03f,
                         shadowProtection = 0.4f,
+                        hslStrength = 0.5f,
                         iso = iso
                     )
                     "ACTION", "ACTN" -> EnhanceParams(
                         baseCompression = 1.2f,
                         detailBoost = 1.08f,
-                        vibranceAmount = 0.06f,
+                        vibranceAmount = 0.08f,
+                        contrastCurveStrength = 0.20f,
                         shadowProtection = 0.2f,
+                        hslStrength = 0.3f,
                         iso = iso
                     )
                     "MACRO", "MCRO" -> EnhanceParams(
                         baseCompression = 1.25f,
-                        detailBoost = 1.3f,
-                        vibranceAmount = 0.07f,
+                        detailBoost = 1.25f,
+                        vibranceAmount = 0.10f,
+                        contrastCurveStrength = 0.20f,
                         shadowProtection = 0.2f,
+                        hslStrength = 0.4f,
                         iso = iso
                     )
                     else -> EnhanceParams(iso = iso)
@@ -178,8 +194,16 @@ object ImageEnhancer {
             applyWarmthShift(pixels, params.warmthShift * strength)
         }
 
+        if (strength > 0f && params.contrastCurveStrength > 0f) {
+            applyLuminanceSCurve(pixels, params.contrastCurveStrength * strength)
+        }
+
         if (strength > 0.3f && params.vibranceAmount > 0f) {
-            applyVibrance(pixels, params.vibranceAmount * strength)
+            applyHueAwareVibrance(pixels, params.vibranceAmount * strength)
+        }
+
+        if (strength > 0f && params.hslStrength > 0f) {
+            applySonyCinetoneHsl(pixels, params.hslStrength * strength)
         }
 
         val result = bitmap.copy(Bitmap.Config.ARGB_8888, true)
@@ -443,7 +467,132 @@ object ImageEnhancer {
         }
     }
 
-    private fun applyVibrance(pixels: IntArray, amount: Float) {
+    private fun applyLuminanceSCurve(pixels: IntArray, strength: Float) {
+        val gain = 5.0f * strength / 0.25f
+        val lut = IntArray(256) { i ->
+            val t = i / 255.0f
+            if (gain < 0.1f) {
+                i
+            } else {
+                val s = (1.0f / (1.0f + Math.exp((-gain * (t - 0.5f)).toDouble()))).toFloat()
+                val s0 = (1.0f / (1.0f + Math.exp((gain * 0.5f).toDouble()))).toFloat()
+                val s1 = (1.0f / (1.0f + Math.exp((-gain * 0.5f).toDouble()))).toFloat()
+                val sigmoid = (s - s0) / (s1 - s0)
+                val blended = t + (sigmoid - t)
+                (blended * 255f).toInt().coerceIn(0, 255)
+            }
+        }
+        for (i in pixels.indices) {
+            val a = (pixels[i] shr 24) and 0xFF
+            val r = ((pixels[i] shr 16) and 0xFF).toFloat()
+            val g = ((pixels[i] shr 8) and 0xFF).toFloat()
+            val b = (pixels[i] and 0xFF).toFloat()
+            val luma = 0.299f * r + 0.587f * g + 0.114f * b
+            val newLuma = lut[luma.toInt().coerceIn(0, 255)].toFloat()
+            if (luma < 1f) continue
+            val ratio = newLuma / luma
+            pixels[i] = (a shl 24) or
+                ((r * ratio).coerceIn(0f, 255f).toInt() shl 16) or
+                ((g * ratio).coerceIn(0f, 255f).toInt() shl 8) or
+                (b * ratio).coerceIn(0f, 255f).toInt()
+        }
+    }
+
+    private fun hueFromRgb(r: Float, g: Float, b: Float): Float {
+        val maxC = maxOf(r, g, b)
+        val minC = minOf(r, g, b)
+        val delta = maxC - minC
+        if (delta < 1f) return 0f
+        val hue = when (maxC) {
+            r -> 60f * (((g - b) / delta) % 6f)
+            g -> 60f * ((b - r) / delta + 2f)
+            else -> 60f * ((r - g) / delta + 4f)
+        }
+        return if (hue < 0f) hue + 360f else hue
+    }
+
+    private fun applySonyCinetoneHsl(pixels: IntArray, strength: Float) {
+        for (i in pixels.indices) {
+            val a = (pixels[i] shr 24) and 0xFF
+            var r = ((pixels[i] shr 16) and 0xFF).toFloat()
+            var g = ((pixels[i] shr 8) and 0xFF).toFloat()
+            var b = (pixels[i] and 0xFF).toFloat()
+
+            val maxC = maxOf(r, g, b)
+            val minC = minOf(r, g, b)
+            val delta = maxC - minC
+            if (delta < 2f) {
+                continue
+            }
+
+            val hue = hueFromRgb(r, g, b)
+            val sat = delta / maxC
+            val luma = 0.299f * r + 0.587f * g + 0.114f * b
+
+            var hueShift = 0f
+            var satScale = 1f
+            var lumShift = 0f
+
+            when {
+                hue < 15f || hue >= 345f -> {
+                    hueShift = 8f * strength
+                    satScale = 1f - 0.10f * strength
+                }
+                hue in 15f..40f -> {
+                    hueShift = -4f * strength
+                    satScale = 1f - 0.08f * strength
+                    lumShift = 12f * strength
+                }
+                hue in 40f..70f -> {
+                    hueShift = -12f * strength
+                    satScale = 1f - 0.20f * strength
+                    lumShift = 5f * strength
+                }
+                hue in 70f..170f -> {
+                    hueShift = 15f * strength
+                    satScale = 1f - 0.15f * strength
+                    lumShift = 2f * strength
+                }
+                hue in 170f..260f -> {
+                    hueShift = -18f * strength
+                    satScale = 1f + 0.08f * strength
+                    lumShift = -8f * strength
+                }
+                hue in 260f..345f -> {
+                    satScale = 1f - 0.25f * strength
+                }
+            }
+
+            val newLuma = (luma + lumShift).coerceIn(0f, 255f)
+            val lumaRatio = if (luma > 1f) newLuma / luma else 1f
+            r *= lumaRatio; g *= lumaRatio; b *= lumaRatio
+
+            if (satScale != 1f) {
+                val l = 0.299f * r + 0.587f * g + 0.114f * b
+                r = l + (r - l) * satScale
+                g = l + (g - l) * satScale
+                b = l + (b - l) * satScale
+            }
+
+            if (hueShift != 0f) {
+                val cosH = Math.cos(Math.toRadians(hueShift.toDouble())).toFloat()
+                val sinH = Math.sin(Math.toRadians(hueShift.toDouble())).toFloat()
+                val l = 0.299f * r + 0.587f * g + 0.114f * b
+                val cr = r - l; val cg = g - l; val cb = b - l
+                val nr = cr * cosH + (0.701f * (cg * 0.587f / 0.299f - cb * 0.114f / 0.299f)) * sinH * 0.15f
+                val ng = cg * cosH - (cr + cb) * sinH * 0.08f
+                val nb = cb * cosH + (0.886f * (cr * 0.299f / 0.114f - cg * 0.587f / 0.114f)) * sinH * 0.15f
+                r = l + nr; g = l + ng; b = l + nb
+            }
+
+            pixels[i] = (a shl 24) or
+                (r.coerceIn(0f, 255f).toInt() shl 16) or
+                (g.coerceIn(0f, 255f).toInt() shl 8) or
+                b.coerceIn(0f, 255f).toInt()
+        }
+    }
+
+    private fun applyHueAwareVibrance(pixels: IntArray, amount: Float) {
         for (i in pixels.indices) {
             val a = (pixels[i] shr 24) and 0xFF
             var r = ((pixels[i] shr 16) and 0xFF).toFloat()
@@ -452,8 +601,32 @@ object ImageEnhancer {
             val maxC = maxOf(r, g, b)
             val minC = minOf(r, g, b)
             val sat = if (maxC > 0f) (maxC - minC) / maxC else 0f
-            val boost = amount * (1.0f - sat)
             val luma = 0.299f * r + 0.587f * g + 0.114f * b
+            val lumNorm = luma / 255f
+
+            val hue = hueFromRgb(r, g, b)
+            val skinFactor = if (hue in 10f..50f) {
+                val dist = abs(hue - 30f) / 20f
+                0.3f + 0.7f * dist
+            } else 1.0f
+
+            val hueMul = when {
+                hue < 15f || hue >= 345f -> 0.85f
+                hue in 15f..50f -> 0.70f
+                hue in 50f..70f -> 0.90f
+                hue in 70f..170f -> 0.88f
+                hue in 170f..200f -> 1.00f
+                hue in 200f..260f -> 1.05f
+                else -> 0.95f
+            }
+
+            val lumScale = when {
+                lumNorm < 0.15f -> lumNorm / 0.15f
+                lumNorm > 0.85f -> (1f - lumNorm) / 0.15f
+                else -> 1.0f
+            }
+
+            val boost = amount * (1.0f - sat) * skinFactor * hueMul * lumScale
             val factor = 1.0f + boost
             r = (luma + (r - luma) * factor).coerceIn(0f, 255f)
             g = (luma + (g - luma) * factor).coerceIn(0f, 255f)

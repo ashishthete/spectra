@@ -36,6 +36,67 @@ object NoiseReducer {
         else -> 3
     }
 
+    fun applySkinSelective(bitmap: Bitmap, iso: Int, faceRects: List<android.graphics.RectF>) {
+        if (faceRects.isEmpty()) {
+            apply(bitmap, iso)
+            return
+        }
+        val w = bitmap.width; val h = bitmap.height
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        val sigma = computeSigma(iso)
+        val spatialR = computeSpatialRadius(iso)
+
+        val skinMask = BooleanArray(w * h)
+        for (face in faceRects) {
+            val pad = 0.15f
+            val x0 = ((face.left - pad) * w).toInt().coerceIn(0, w - 1)
+            val y0 = ((face.top - pad) * h).toInt().coerceIn(0, h - 1)
+            val x1 = ((face.right + pad) * w).toInt().coerceIn(0, w)
+            val y1 = ((face.bottom + pad) * h).toInt().coerceIn(0, h)
+            for (y in y0 until y1) {
+                for (x in x0 until x1) {
+                    val p = pixels[y * w + x]
+                    val r = (p shr 16) and 0xFF; val g = (p shr 8) and 0xFF; val b = p and 0xFF
+                    val ycbcr = ColorSpaceUtils.rgbToYCbCr(r, g, b)
+                    if (ColorSpaceUtils.isSkinPixelYCbCr(ycbcr[1], ycbcr[2])) {
+                        skinMask[y * w + x] = true
+                    }
+                }
+            }
+        }
+
+        val yChannel = IntArray(w * h)
+        val cbChannel = IntArray(w * h)
+        val crChannel = IntArray(w * h)
+        for (i in pixels.indices) {
+            val r = (pixels[i] shr 16) and 0xFF; val g = (pixels[i] shr 8) and 0xFF; val b = pixels[i] and 0xFF
+            val ycbcr = ColorSpaceUtils.rgbToYCbCr(r, g, b)
+            yChannel[i] = ycbcr[0]; cbChannel[i] = ycbcr[1]; crChannel[i] = ycbcr[2]
+        }
+
+        val yFiltered = tiledBilateralFilter(yChannel, w, h, spatialR, sigma * 0.7f)
+        val cbFiltered = bilateralFilter(cbChannel, w, h, spatialR + 1, sigma * 1.5f)
+        val crFiltered = bilateralFilter(crChannel, w, h, spatialR + 1, sigma * 1.5f)
+
+        for (i in pixels.indices) {
+            if (!skinMask[i]) continue
+            val rgb = ColorSpaceUtils.ycbcrToRgb(yFiltered[i], cbFiltered[i], crFiltered[i])
+            val blend = 0.65f
+            val oR = (pixels[i] shr 16) and 0xFF
+            val oG = (pixels[i] shr 8) and 0xFF
+            val oB = pixels[i] and 0xFF
+            val r = (rgb[0] * blend + oR * (1f - blend)).roundToInt().coerceIn(0, 255)
+            val g = (rgb[1] * blend + oG * (1f - blend)).roundToInt().coerceIn(0, 255)
+            val b = (rgb[2] * blend + oB * (1f - blend)).roundToInt().coerceIn(0, 255)
+            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+
+        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+        Log.d(TAG, "Skin-selective NR: ISO=$iso, sigma=$sigma, faces=${faceRects.size}")
+    }
+
     fun apply(bitmap: Bitmap, iso: Int) {
         val w = bitmap.width; val h = bitmap.height
         val megapixels = (w.toLong() * h) / 1_000_000
@@ -156,10 +217,8 @@ object NoiseReducer {
             )
             if (gpuResult != null) return gpuResult
         }
-        Log.w(TAG, "GPU bilateral filter unavailable, falling back to CPU box blur")
-        val result = channel.copyOf()
-        boxBlurChannel(result, w, h, spatialRadius)
-        return result
+        Log.w(TAG, "GPU bilateral filter unavailable, falling back to CPU bilateral")
+        return cpuBilateral(channel, w, h, spatialRadius, rangeSigma)
     }
 
 
@@ -212,9 +271,50 @@ object NoiseReducer {
             )
             if (gpuResult != null) return gpuResult
         }
-        Log.w(TAG, "GPU chroma bilateral unavailable, falling back to CPU box blur")
-        val result = channel.copyOf()
-        boxBlurChannel(result, w, h, spatialRadius)
+        Log.w(TAG, "GPU chroma bilateral unavailable, falling back to CPU bilateral")
+        return cpuBilateral(channel, w, h, spatialRadius, rangeSigma)
+    }
+
+    private fun cpuBilateral(channel: IntArray, w: Int, h: Int, radius: Int, rangeSigma: Float): IntArray {
+        val result = IntArray(w * h)
+        val rangeLut = IntArray(256)
+        val rangeCoeff = -0.5f / (rangeSigma * rangeSigma)
+        for (d in 0..255) rangeLut[d] = (exp(d.toFloat() * d * rangeCoeff) * 1024).toInt()
+
+        val spatialLut = IntArray((2 * radius + 1) * (2 * radius + 1))
+        val spatialSigma = radius * 0.5f
+        val spatialCoeff = -0.5f / (spatialSigma * spatialSigma)
+        for (dy in -radius..radius) {
+            for (dx in -radius..radius) {
+                spatialLut[(dy + radius) * (2 * radius + 1) + (dx + radius)] =
+                    (exp((dx * dx + dy * dy).toFloat() * spatialCoeff) * 1024).toInt()
+            }
+        }
+
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val center = channel[y * w + x]
+                var wSum = 0L
+                var vSum = 0L
+                for (dy in -radius..radius) {
+                    val ny = y + dy
+                    if (ny < 0 || ny >= h) continue
+                    for (dx in -radius..radius) {
+                        val nx = x + dx
+                        if (nx < 0 || nx >= w) continue
+                        val neighbor = channel[ny * w + nx]
+                        val diff = if (center > neighbor) center - neighbor else neighbor - center
+                        if (diff > 255) continue
+                        val sw = spatialLut[(dy + radius) * (2 * radius + 1) + (dx + radius)]
+                        val rw = rangeLut[diff]
+                        val weight = (sw.toLong() * rw) shr 10
+                        wSum += weight
+                        vSum += neighbor * weight
+                    }
+                }
+                result[y * w + x] = if (wSum > 0) (vSum / wSum).toInt().coerceIn(0, 255) else center
+            }
+        }
         return result
     }
 }

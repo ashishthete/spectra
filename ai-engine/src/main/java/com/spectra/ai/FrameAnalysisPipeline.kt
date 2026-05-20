@@ -101,6 +101,7 @@ class FrameAnalysisPipeline @Inject constructor(
         } else {
             colorTemperature
         }
+        val highlightProtection = lightingAnalyzer.computeDynamicHighlightProtection(pixels)
         val lighting = lightingAnalyzer.analyzeFromMetadata(avgBrightness, exposureTimeNs, iso, estimatedCt, lightingAnalyzer.lastBrightnessVariance)
 
         val faceRectsForLighting = if (currentFaceData.hasFaces) {
@@ -171,7 +172,9 @@ class FrameAnalysisPipeline @Inject constructor(
             faceData = currentFaceData,
             ambientLux = ambientLux,
             semanticEvCompensation = meteringResult.targetExposureCompensation,
-            hasSkyHighlights = meteringResult.hasSkyHighlights
+            hasSkyHighlights = meteringResult.hasSkyHighlights,
+            highlightProtection = highlightProtection,
+            estimatedDuv = lightingAnalyzer.lastEstimatedDuv
         )
         _analysis.value = sceneAnalysis
 

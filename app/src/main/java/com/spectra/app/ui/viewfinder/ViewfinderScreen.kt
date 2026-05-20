@@ -16,8 +16,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -77,6 +79,7 @@ fun ViewfinderScreen(
     val hudState by viewModel.hudState.collectAsState()
     val currentTip by viewModel.currentTip.collectAsState()
     val cameraReady by viewModel.cameraController.isReady.collectAsState()
+    val captureInProgress by viewModel.captureInProgress.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -177,6 +180,7 @@ fun ViewfinderScreen(
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { offset ->
+                            viewModel.showControls()
                             val inControls = offset.y < topDeadZonePx || offset.y > size.height - bottomDeadZonePx
                             if (!inControls) viewModel.tapToFocus(offset.x, offset.y)
                         },
@@ -231,43 +235,18 @@ fun ViewfinderScreen(
 
         CaptureFlash(visible = hudState.showCaptureFlash)
 
-        if (hudState.isCapturing) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .background(HudColors.surfaceGlass, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                Text(
-                    text = "Capturing...",
-                    color = HudColors.accent,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-        }
-
         AnimatedVisibility(
             visible = hudState.isHighlightClipped && !hudState.isCapturing && !hudState.showSmartReview,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 12.dp, top = 70.dp)
+                .align(Alignment.TopEnd)
+                .padding(end = 12.dp, top = 70.dp)
         ) {
-            Text(
-                text = "HIGHLIGHTS CLIPPED ${"%.0f".format(hudState.highlightClipFraction * 100)}%",
-                color = androidx.compose.ui.graphics.Color(0xFFFF4444),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
+            Box(
                 modifier = Modifier
-                    .background(
-                        androidx.compose.ui.graphics.Color(0x88000000),
-                        RoundedCornerShape(4.dp)
-                    )
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .size(8.dp)
+                    .background(androidx.compose.ui.graphics.Color(0xFFFF4444), CircleShape)
             )
         }
 
@@ -277,20 +256,12 @@ fun ViewfinderScreen(
             exit = fadeOut(),
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 12.dp, top = 90.dp)
+                .padding(start = 12.dp, top = 70.dp)
         ) {
-            Text(
-                text = "SHADOWS CLIPPED ${"%.0f".format(hudState.shadowClipFraction * 100)}%",
-                color = androidx.compose.ui.graphics.Color(0xFF4488FF),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
+            Box(
                 modifier = Modifier
-                    .background(
-                        androidx.compose.ui.graphics.Color(0x88000000),
-                        RoundedCornerShape(4.dp)
-                    )
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .size(8.dp)
+                    .background(androidx.compose.ui.graphics.Color(0xFF4488FF), CircleShape)
             )
         }
 
@@ -319,7 +290,7 @@ fun ViewfinderScreen(
 
         BeautyToggle(
             beautyLevel = hudState.beautyLevel,
-            isVisible = hudState.isFrontCamera,
+            isVisible = hudState.isFrontCamera && hudState.controlsVisible,
             onToggle = { viewModel.cycleBeauty() },
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -389,7 +360,7 @@ fun ViewfinderScreen(
             )
         }
 
-        if (hudState.preset != com.spectra.core.model.CameraPreset.PRO) {
+        if (hudState.preset != com.spectra.core.model.CameraPreset.PRO && hudState.controlsVisible) {
             Text(
                 text = "H",
                 color = if (hudState.showMiniHistogram) HudColors.accent else HudColors.textSecondary,
@@ -496,7 +467,11 @@ fun ViewfinderScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            if (hudState.mode != CameraMode.VIDEO) {
+            AnimatedVisibility(
+                visible = hudState.controlsVisible && hudState.mode != CameraMode.VIDEO,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
                 StyleSelector(
                     currentStyle = hudState.photoStyle,
                     onStyleSelected = { viewModel.setPhotoStyle(it) },
@@ -514,6 +489,7 @@ fun ViewfinderScreen(
                 isFrontCamera = hudState.isFrontCamera,
                 isVideoMode = hudState.mode == CameraMode.VIDEO,
                 isRecording = hudState.isRecording,
+                captureInProgress = captureInProgress,
                 onShutterTap = { viewModel.capturePhoto() },
                 onBurstStart = { viewModel.startBurst() },
                 onBurstEnd = { viewModel.stopBurst() },
@@ -592,6 +568,7 @@ fun ViewfinderScreen(
             onSaveEnhanced = { viewModel.saveEnhancedOnly() },
             onSaveBoth = { viewModel.saveBoth() },
             onDiscard = { viewModel.discardSmartCapture() },
+            onQuickSave = { viewModel.quickSave() },
             cropSuggestions = hudState.cropSuggestions
         )
     }

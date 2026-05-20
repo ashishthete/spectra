@@ -20,6 +20,12 @@ data class MixedLightingResult(
 @Singleton
 class LightingAnalyzer @Inject constructor() {
 
+    var lastEstimatedDuv: Float = 0f
+        private set
+
+    var lastHighlightProtection: Float = 0f
+        private set
+
     private var lastCondition: LightingCondition = LightingCondition.UNKNOWN
     private var pendingCondition: LightingCondition? = null
     private var pendingCount: Int = 0
@@ -123,6 +129,7 @@ class LightingAnalyzer @Inject constructor() {
                 val endY = minOf(startY + cellH, height)
 
                 var totalR = 0L
+                var totalG = 0L
                 var totalB = 0L
                 var count = 0
                 val step = maxOf(1, (endX - startX) * (endY - startY) / 500)
@@ -138,6 +145,7 @@ class LightingAnalyzer @Inject constructor() {
                         val lum = 0.299 * r + 0.587 * g + 0.114 * b
                         if (lum < 30 || lum > 240) continue
                         totalR += r
+                        totalG += g
                         totalB += b
                         count++
                     }
@@ -145,8 +153,9 @@ class LightingAnalyzer @Inject constructor() {
 
                 val ct = if (count > 0) {
                     val avgR = totalR.toFloat() / count
+                    val avgG = totalG.toFloat() / count
                     val avgB = totalB.toFloat() / count
-                    estimateCtFromRbRatio(avgR, avgB)
+                    estimateCtAndDuvFromRgb(avgR / 255f, avgG / 255f, avgB / 255f).first
                 } else {
                     5500
                 }
@@ -204,7 +213,7 @@ class LightingAnalyzer @Inject constructor() {
                 val endX = minOf(startX + cellW, width)
                 val endY = minOf(startY + cellH, height)
 
-                var totalR = 0L; var totalB = 0L; var count = 0
+                var totalR = 0L; var totalG = 0L; var totalB = 0L; var count = 0
                 val step = maxOf(1, (endX - startX) * (endY - startY) / 500)
                 var idx = 0
                 for (y in startY until endY) {
@@ -217,10 +226,12 @@ class LightingAnalyzer @Inject constructor() {
                         val b = pixel and 0xFF
                         val lum = 0.299 * r + 0.587 * g + 0.114 * b
                         if (lum < 30 || lum > 240) continue
-                        totalR += r; totalB += b; count++
+                        totalR += r; totalG += g; totalB += b; count++
                     }
                 }
-                zoneCts[gy][gx] = if (count > 0) estimateCtFromRbRatio(totalR.toFloat() / count, totalB.toFloat() / count) else 5500
+                zoneCts[gy][gx] = if (count > 0) {
+                    estimateCtAndDuvFromRgb(totalR.toFloat() / (count * 255f), totalG.toFloat() / (count * 255f), totalB.toFloat() / (count * 255f)).first
+                } else 5500
             }
         }
 
@@ -295,17 +306,7 @@ class LightingAnalyzer @Inject constructor() {
     }
 
     internal fun estimateCtFromRbRatio(avgR: Float, avgB: Float): Int {
-        val rbRatio = avgR / avgB.coerceAtLeast(1f)
-        val breakpoints = floatArrayOf(0.7f, 0.8f, 0.9f, 1.0f, 1.15f, 1.3f, 1.6f, 2.0f)
-        val kelvinValues = intArrayOf(9000, 7500, 6500, 5800, 5200, 4500, 3800, 3200, 2800)
-        for (i in breakpoints.indices) {
-            if (rbRatio < breakpoints[i]) return kelvinValues[i]
-            if (i < breakpoints.size - 1 && rbRatio < breakpoints[i + 1]) {
-                val t = (rbRatio - breakpoints[i]) / (breakpoints[i + 1] - breakpoints[i])
-                return (kelvinValues[i] + t * (kelvinValues[i + 1] - kelvinValues[i])).toInt()
-            }
-        }
-        return kelvinValues.last()
+        return estimateCtAndDuvFromRgb(avgR / 255f, 0.5f, avgB / 255f).first
     }
 
     fun computeLightDirection(pixels: IntArray, width: Int, height: Int): LightDirection {
@@ -392,16 +393,79 @@ class LightingAnalyzer @Inject constructor() {
         val avgG = totalG.toFloat() / count
         val avgB = totalB.toFloat() / count
         if (avgG < 1f) return 5500
-        val rbRatio = avgR / avgB.coerceAtLeast(1f)
-        val breakpoints = floatArrayOf(0.7f, 0.8f, 0.9f, 1.0f, 1.15f, 1.3f, 1.6f, 2.0f)
-        val kelvinValues = intArrayOf(9000, 7500, 6500, 5800, 5200, 4500, 3800, 3200, 2800)
-        for (i in breakpoints.indices) {
-            if (rbRatio < breakpoints[i]) return kelvinValues[i]
-            if (i < breakpoints.size - 1 && rbRatio < breakpoints[i + 1]) {
-                val t = (rbRatio - breakpoints[i]) / (breakpoints[i + 1] - breakpoints[i])
-                return (kelvinValues[i] + t * (kelvinValues[i + 1] - kelvinValues[i])).toInt()
-            }
+        val result = estimateCtAndDuvFromRgb(avgR / 255f, avgG / 255f, avgB / 255f)
+        lastEstimatedDuv = result.second
+        return result.first
+    }
+
+    fun estimateCtAndDuvFromRgb(r: Float, g: Float, b: Float): Pair<Int, Float> {
+        val rL = if (r <= 0.04045f) r / 12.92f else Math.pow(((r + 0.055) / 1.055), 2.4).toFloat()
+        val gL = if (g <= 0.04045f) g / 12.92f else Math.pow(((g + 0.055) / 1.055), 2.4).toFloat()
+        val bL = if (b <= 0.04045f) b / 12.92f else Math.pow(((b + 0.055) / 1.055), 2.4).toFloat()
+
+        val xVal = rL * 0.4124f + gL * 0.3576f + bL * 0.1805f
+        val yVal = rL * 0.2126f + gL * 0.7152f + bL * 0.0722f
+        val zVal = rL * 0.0193f + gL * 0.1192f + bL * 0.9505f
+
+        val sum = xVal + yVal + zVal
+        if (sum <= 0f) return Pair(5500, 0f)
+
+        val cx = xVal / sum
+        val cy = yVal / sum
+
+        val n = (cx - 0.3320f) / (0.1858f - cy)
+        val cct = 449f * n * n * n + 3525f * n * n + 6823.3f * n + 5520.33f
+        val kelvin = cct.toInt().coerceIn(1667, 25000)
+
+        val denom = -2f * cx + 12f * cy + 3f
+        if (Math.abs(denom) < 0.0001f) return Pair(kelvin, 0f)
+        val u = 4f * cx / denom
+        val v = 6f * cy / denom
+
+        val t = 1000.0f / kelvin
+        val xp = if (kelvin <= 4000) {
+            -0.2661239f * t * t * t - 0.2343580f * t * t + 0.8776956f * t + 0.179910f
+        } else {
+            -3.0258469f * t * t * t + 2.1070379f * t * t + 0.2226347f * t + 0.240390f
         }
-        return kelvinValues.last()
+
+        val yp = if (kelvin <= 6000) {
+            -3.000f * xp * xp + 2.870f * xp - 0.275f
+        } else {
+            -1.4185f * xp * xp * xp - 1.359f * xp * xp + 1.185f * xp - 0.202f
+        }
+
+        val denomP = -2f * xp + 12f * yp + 3f
+        if (Math.abs(denomP) < 0.0001f) return Pair(kelvin, 0f)
+        val up = 4f * xp / denomP
+        val vp = 6f * yp / denomP
+
+        val dist = kotlin.math.sqrt(((u - up) * (u - up) + (v - vp) * (v - vp)).toDouble()).toFloat()
+        val duv = if (v > vp) dist else -dist
+
+        return Pair(kelvin, duv)
+    }
+
+    fun computeDynamicHighlightProtection(pixels: IntArray): Float {
+        if (pixels.isEmpty()) { lastHighlightProtection = 0f; return 0f }
+        var highlightsCount = 0
+        val step = maxOf(1, pixels.size / 5000)
+        var count = 0
+        for (i in pixels.indices step step) {
+            val pixel = pixels[i]
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8) and 0xFF
+            val b = pixel and 0xFF
+            val lum = 0.2126f * r + 0.7152f * g + 0.0722f * b
+            if (lum > 240) {
+                highlightsCount++
+            }
+            count++
+        }
+        if (count == 0) { lastHighlightProtection = 0f; return 0f }
+        val ratio = highlightsCount.toFloat() / count
+        val evOffset = -(ratio * 5.0f).coerceIn(0f, 1.5f)
+        lastHighlightProtection = evOffset
+        return evOffset
     }
 }

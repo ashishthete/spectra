@@ -14,6 +14,10 @@
 -dontwarn com.google.mlkit.**
 -keep class com.google.android.gms.internal.mlkit_vision_face.** { *; }
 
+# MediaPipe (hand gesture detection)
+-keep class com.google.mediapipe.** { *; }
+-dontwarn com.google.mediapipe.**
+
 # Hilt
 -keep class dagger.hilt.** { *; }
 -dontwarn dagger.hilt.**
