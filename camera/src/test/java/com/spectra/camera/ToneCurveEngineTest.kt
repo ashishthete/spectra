@@ -81,6 +81,31 @@ class ToneCurveEngineTest {
     }
 
     @Test
+    fun `S-curve is monotonically increasing`() {
+        val curve = ToneCurveEngine.sCurve(0.5f)
+        for (i in 1..255) {
+            assertThat(curve[i]).isAtLeast(curve[i - 1])
+        }
+    }
+
+    @Test
+    fun `S-curve with zero strength is identity`() {
+        val curve = ToneCurveEngine.sCurve(0f)
+        for (i in 0..255) {
+            assertThat(curve[i]).isEqualTo(i)
+        }
+    }
+
+    @Test
+    fun `S-curve has no large jumps between adjacent values`() {
+        val curve = ToneCurveEngine.sCurve(0.5f)
+        for (i in 1..255) {
+            val jump = kotlin.math.abs(curve[i] - curve[i - 1])
+            assertThat(jump).isAtMost(3)
+        }
+    }
+
+    @Test
     fun `blendCurves interpolates between curves`() {
         val identity = ToneCurveEngine.identityCurve()
         val constant = IntArray(256) { 200 }

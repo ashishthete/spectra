@@ -7,6 +7,7 @@ import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.MeteringRectangle
 import android.hardware.camera2.params.RggbChannelVector
 import android.util.Range
+import android.util.Rational
 import android.util.Log
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.CaptureRequestOptions
@@ -18,8 +19,10 @@ import javax.inject.Singleton
 @Singleton
 class Camera2SettingsApplier @Inject constructor() {
 
+    private val lock = Any()
+
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
-    fun applyManual(camera: Camera, settings: CameraSettings) {
+    fun applyManual(camera: Camera, settings: CameraSettings) = synchronized(lock) {
         val camera2Control = Camera2CameraControl.from(camera.cameraControl)
 
         val builder = CaptureRequestOptions.Builder()
@@ -90,7 +93,14 @@ class Camera2SettingsApplier @Inject constructor() {
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
-    fun applyAutoWithHints(camera: Camera, settings: CameraSettings, motionLevel: Int = 0, currentIso: Int = 0) {
+    fun applyAutoWithHints(
+        camera: Camera,
+        settings: CameraSettings,
+        motionLevel: Int = 0,
+        currentIso: Int = 0,
+        aeCompensationStep: Rational = Rational(1, 10),
+        aeCompensationRange: Range<Int> = Range(-20, 20)
+    ) = synchronized(lock) {
         val motionEvBias = when {
             motionLevel >= 4 && settings.shutterSpeedDenominator >= 500 -> -1.5f
             motionLevel >= 3 && settings.shutterSpeedDenominator >= 250 -> -1.0f
@@ -98,7 +108,8 @@ class Camera2SettingsApplier @Inject constructor() {
             else -> 0f
         }
         val totalEv = settings.exposureCompensation + motionEvBias
-        val evSteps = (totalEv * 6).toInt().coerceIn(-12, 12)
+        val stepsPerEv = if (aeCompensationStep.toFloat() > 0f) (1.0f / aeCompensationStep.toFloat()).toInt() else 10
+        val evSteps = (totalEv * stepsPerEv).toInt().coerceIn(aeCompensationRange.lower, aeCompensationRange.upper)
         try {
             camera.cameraControl.setExposureCompensationIndex(evSteps)
         } catch (_: Exception) { }
@@ -162,7 +173,57 @@ class Camera2SettingsApplier @Inject constructor() {
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
-    fun applyAuto(camera: Camera) {
+    fun applyAutoWithConstraints(
+        camera: Camera,
+        settings: CameraSettings,
+        constraints: com.spectra.core.model.CameraConstraints,
+        motionLevel: Int = 0,
+        aeCompensationStep: Rational = Rational(1, 10),
+        aeCompensationRange: Range<Int> = Range(-20, 20)
+    ) = synchronized(lock) {
+        val totalEv = constraints.evTargetOffset
+        val stepsPerEv = if (aeCompensationStep.toFloat() > 0f) (1.0f / aeCompensationStep.toFloat()).toInt() else 10
+        val evSteps = (totalEv * stepsPerEv).toInt().coerceIn(aeCompensationRange.lower, aeCompensationRange.upper)
+        try {
+            camera.cameraControl.setExposureCompensationIndex(evSteps)
+        } catch (_: Exception) { }
+
+        val camera2Control = Camera2CameraControl.from(camera.cameraControl)
+
+        val builder = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+
+        // Pass boundaries to AE via TARGET_FPS_RANGE to limit exposure times indirectly
+        val fpsMax = if (constraints.minShutterSpeedDenominator > 0) {
+            constraints.minShutterSpeedDenominator.coerceIn(15, 60)
+        } else 30
+        val fpsMin = (fpsMax / 2).coerceAtLeast(15)
+        
+        builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fpsMin, fpsMax))
+
+        // We can't strictly cap ISO in pure Camera2 CONTROL_AE_MODE_ON without vendor tags, 
+        // but we apply EV offset and FPS constraints. 
+
+        val wbDrift = kotlin.math.abs(settings.whiteBalanceKelvin - 5500)
+        if (wbDrift > 500) {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_OFF)
+            builder.setCaptureRequestOption(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
+            builder.setCaptureRequestOption(CaptureRequest.COLOR_CORRECTION_GAINS, kelvinToRggb(settings.whiteBalanceKelvin))
+        } else {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+        }
+
+        builder.setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+        builder.setCaptureRequestOption(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_HIGH_QUALITY)
+
+        camera2Control.captureRequestOptions = builder.build()
+        Log.d("SettingsApplier", "ConstrainedAuto: EV=$evSteps, FPS=($fpsMin-$fpsMax), maxISO=${constraints.maxIso}")
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    fun applyAuto(camera: Camera) = synchronized(lock) {
         val camera2Control = Camera2CameraControl.from(camera.cameraControl)
 
         try {
@@ -205,7 +266,7 @@ class Camera2SettingsApplier @Inject constructor() {
         settings: CameraSettings,
         isoRange: android.util.Range<Int> = Range(50, 3200),
         exposureRange: android.util.Range<Long> = Range(1_000_000L, 1_000_000_000L)
-    ) {
+    ) = synchronized(lock) {
         val camera2Control = Camera2CameraControl.from(camera.cameraControl)
 
         val clampedIso = clampIso(settings.iso, isoRange.lower, isoRange.upper)
@@ -269,8 +330,8 @@ class Camera2SettingsApplier @Inject constructor() {
     }
 
     @androidx.camera.camera2.interop.ExperimentalCamera2Interop
-    fun applyFaceMetering(camera: Camera, faceRects: List<RectF>, sensorArrayWidth: Int = 4000, sensorArrayHeight: Int = 3000) {
-        if (faceRects.isEmpty()) return
+    fun applyFaceMetering(camera: Camera, faceRects: List<RectF>, sensorArrayWidth: Int = 4000, sensorArrayHeight: Int = 3000) = synchronized(lock) {
+        if (faceRects.isEmpty()) return@synchronized
         val camera2Control = Camera2CameraControl.from(camera.cameraControl)
 
         val meteringRegions = faceRects.take(3).map { face ->

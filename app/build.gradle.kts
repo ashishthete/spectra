@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
 }
+import java.util.Properties
 
 android {
     namespace = "com.spectra.app"
@@ -20,7 +21,7 @@ android {
 
     signingConfigs {
         create("release") {
-            val props = java.util.Properties()
+            val props = Properties()
             val propsFile = rootProject.file("keystore.properties")
             if (propsFile.exists()) {
                 props.load(propsFile.inputStream())

@@ -3,6 +3,8 @@ package com.spectra.camera
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
+import com.spectra.camera.gpu.GpuContext
+import com.spectra.camera.gpu.GpuMertensFusion
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
@@ -10,14 +12,30 @@ import kotlin.math.min
 
 class HdrProcessor {
 
+    private var gpuContext: GpuContext? = null
+
+    fun setGpuContext(ctx: GpuContext?) {
+        gpuContext = ctx
+    }
+
     companion object {
         fun computeBracketExposures(baseExposureNs: Long, baseIso: Int): List<Pair<Long, Int>> {
-            val underExposure = (baseExposureNs / 2.83f).toLong()  // -1.5EV (÷√8)
-            val overExposure = (baseExposureNs * 2.83f).toLong()   // +1.5EV (×√8)
+            val underExposure = (baseExposureNs / 4.0f).toLong()  // -2.0EV
+            val overExposure = (baseExposureNs * 4.0f).toLong()   // +2.0EV
             return listOf(
                 Pair(underExposure, baseIso),
                 Pair(baseExposureNs, baseIso),
                 Pair(overExposure, baseIso)
+            )
+        }
+
+        fun computeBracketExposures5Frame(baseExposureNs: Long, baseIso: Int): List<Pair<Long, Int>> {
+            return listOf(
+                Pair((baseExposureNs / 8.0f).toLong(), baseIso),    // -3.0EV
+                Pair((baseExposureNs / 2.83f).toLong(), baseIso),   // -1.5EV
+                Pair(baseExposureNs, baseIso),                       //  0.0EV
+                Pair((baseExposureNs * 2.83f).toLong(), baseIso),   // +1.5EV
+                Pair((baseExposureNs * 8.0f).toLong(), baseIso)     // +3.0EV
             )
         }
 
@@ -40,8 +58,8 @@ class HdrProcessor {
             return if (count > 0) sum / count else 0f
         }
 
-        fun wellExposednessWeight(value: Float): Float {
-            val diff = value - 0.5f
+        fun wellExposednessWeight(value: Float, targetLum: Float = 0.5f): Float {
+            val diff = value - targetLum
             return exp((-12.5f * diff * diff).toDouble()).toFloat()
         }
 
@@ -61,8 +79,8 @@ class HdrProcessor {
             } else {
                 baseExposureNs
             }
-            val underExposure = (biasedBase / 2.83f).toLong()  // -1.5EV (÷√8)
-            val overExposure = (biasedBase * 2.83f).toLong()   // +1.5EV (×√8)
+            val underExposure = (biasedBase / 4.0f).toLong()  // -2.0EV
+            val overExposure = (biasedBase * 4.0f).toLong()    // +2.0EV
             return listOf(
                 Pair(underExposure, baseIso),
                 Pair(biasedBase, baseIso),
@@ -92,7 +110,6 @@ class HdrProcessor {
             val ghostMask = BooleanArray(n)
             if (frames.size < 2) return ghostMask
 
-            // Compute luminance for each frame
             val lumFrames = frames.map { frame ->
                 IntArray(n) { i ->
                     val r = (frame[i] shr 16) and 0xFF
@@ -102,23 +119,60 @@ class HdrProcessor {
                 }
             }
 
-            // Compute median threshold bitmaps
+            val exclusionZone = 6
             val mtbs = lumFrames.map { lum ->
                 val sorted = lum.copyOf()
                 sorted.sort()
                 val median = sorted[sorted.size / 2]
-                BooleanArray(n) { lum[it] > median }
+                val exclude = BooleanArray(n) { abs(lum[it] - median) <= exclusionZone }
+                Pair(BooleanArray(n) { lum[it] > median }, exclude)
             }
 
-            // XOR reference MTB with others — high disagreement = ghost
-            val refMtb = mtbs[0]
+            val refMtb = mtbs[0].first
+            val refExclude = mtbs[0].second
             for (i in 1 until mtbs.size) {
+                val otherMtb = mtbs[i].first
+                val otherExclude = mtbs[i].second
                 for (px in refMtb.indices) {
-                    if (refMtb[px] != mtbs[i][px]) ghostMask[px] = true
+                    if (!refExclude[px] && !otherExclude[px] && refMtb[px] != otherMtb[px]) {
+                        ghostMask[px] = true
+                    }
                 }
             }
 
-            return ghostMask
+            val tilesX = w / tileSize
+            val tilesY = h / tileSize
+            if (tilesX == 0 || tilesY == 0) return ghostMask
+            val ghostThreshold = 0.3f
+            val tileGhost = BooleanArray(n)
+            for (ty in 0 until tilesY) {
+                for (tx in 0 until tilesX) {
+                    var ghostCount = 0
+                    var total = 0
+                    for (py in 0 until tileSize) {
+                        for (px in 0 until tileSize) {
+                            val x = tx * tileSize + px
+                            val y = ty * tileSize + py
+                            if (x < w && y < h) {
+                                total++
+                                if (ghostMask[y * w + x]) ghostCount++
+                            }
+                        }
+                    }
+                    val isGhostTile = total > 0 && ghostCount.toFloat() / total > ghostThreshold
+                    if (isGhostTile) {
+                        for (py in 0 until tileSize) {
+                            for (px in 0 until tileSize) {
+                                val x = tx * tileSize + px
+                                val y = ty * tileSize + py
+                                if (x < w && y < h) tileGhost[y * w + x] = true
+                            }
+                        }
+                    }
+                }
+            }
+
+            return tileGhost
         }
 
         fun computeShadowBoostStrength(sceneContrast: Float): Float {
@@ -126,12 +180,41 @@ class HdrProcessor {
             val normalized = ((sceneContrast - 0.15f) / 0.85f).coerceIn(0f, 1f)
             return (normalized * 1.0f).coerceIn(0f, 1.0f)
         }
+
+        fun computeDrd(pixels: IntArray): Float {
+            if (pixels.isEmpty()) return 0f
+            var clippedHigh = 0
+            var clippedLow = 0
+            for (pixel in pixels) {
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+                val lum = (r * 77 + g * 150 + b * 29) shr 8
+                if (lum > 250) clippedHigh++
+                if (lum < 5) clippedLow++
+            }
+            return (clippedHigh + clippedLow).toFloat() / pixels.size
+        }
+
+        fun shouldTriggerHdr(pixels: IntArray): Boolean {
+            return computeDrd(pixels) > 0.05f
+        }
     }
 
     fun mertensFusion(frames: List<IntArray>, width: Int, height: Int): IntArray {
         val numFrames = frames.size
         if (numFrames == 0) return IntArray(0)
         if (numFrames == 1) return frames[0].copyOf()
+
+        val gpu = gpuContext
+        if (gpu != null && numFrames == 3) {
+            val gpuResult = GpuMertensFusion.fuseFromPixels(gpu, frames, width, height)
+            if (gpuResult != null) {
+                Log.d("HdrProcessor", "GPU Mertens fusion succeeded: ${width}x${height}")
+                return gpuResult
+            }
+            Log.d("HdrProcessor", "GPU Mertens fusion failed, falling back to CPU")
+        }
 
         val n = width * height
         val weightMaps = Array(numFrames) { FloatArray(n) }
@@ -153,14 +236,11 @@ class HdrProcessor {
                     val g = ((pixels[i] shr 8) and 0xFF) / 255f
                     val b = (pixels[i] and 0xFF) / 255f
 
-                    val contrast = if (x in 1 until width - 1 && y in 1 until height - 1) {
-                        contrastWeight(luminance, width, height, x, y)
-                    } else 0f
-                    val laplacian = laplacianContrastWeight(luminance, width, height, x, y)
-                    val saturation = saturationWeight(r, g, b)
-                    val exposure = wellExposednessWeight(luminance[i])
+                    val contrast = (laplacianContrastWeight(luminance, width, height, x, y) + 0.001f)
+                    val saturation = (saturationWeight(r, g, b) + 0.001f)
+                    val exposure = (wellExposednessWeight(luminance[i]) + 0.001f)
 
-                    weightMaps[f][i] = (contrast + laplacian + 0.001f) * (saturation + 0.001f) * (exposure + 0.001f)
+                    weightMaps[f][i] = contrast * saturation * exposure
                 }
             }
         }
@@ -203,6 +283,75 @@ class HdrProcessor {
         }
 
         return result
+    }
+
+    fun semanticMertensFusion(frames: List<IntArray>, width: Int, height: Int, levels: Int = 4): IntArray {
+        val numFrames = frames.size
+        if (numFrames < 2) return mertensFusionPyramid(frames, width, height, levels)
+
+        val baseIdx = numFrames / 2
+        val skyMask = SkySegmenter.detectSkyMask(frames[baseIdx], width, height)
+        val skyFraction = SkySegmenter.computeSkyFraction(skyMask)
+
+        if (skyFraction < 0.05f || skyFraction > 0.8f) {
+            return mertensFusionPyramid(frames, width, height, levels)
+        }
+
+        val n = width * height
+        val weightMaps = Array(numFrames) { FloatArray(n) }
+
+        for (f in 0 until numFrames) {
+            val pixels = frames[f]
+            val luminance = FloatArray(n)
+            for (i in 0 until n) {
+                val r = ((pixels[i] shr 16) and 0xFF) / 255f
+                val g = ((pixels[i] shr 8) and 0xFF) / 255f
+                val b = (pixels[i] and 0xFF) / 255f
+                luminance[i] = 0.299f * r + 0.587f * g + 0.114f * b
+            }
+
+            for (y in 0 until height) {
+                for (x in 0 until width) {
+                    val i = y * width + x
+                    val r = ((pixels[i] shr 16) and 0xFF) / 255f
+                    val g = ((pixels[i] shr 8) and 0xFF) / 255f
+                    val b = (pixels[i] and 0xFF) / 255f
+
+                    val contrast = (laplacianContrastWeight(luminance, width, height, x, y) + 0.001f)
+                    val saturation = (saturationWeight(r, g, b) + 0.001f)
+
+                    val isSky = skyMask[i]
+                    val exposureTarget = (if (isSky) {
+                        wellExposednessWeight(luminance[i], targetLum = 0.35f)
+                    } else {
+                        wellExposednessWeight(luminance[i], targetLum = 0.6f)
+                    }) + 0.001f
+
+                    weightMaps[f][i] = contrast * saturation * exposureTarget
+                }
+            }
+        }
+
+        for (i in 0 until n) {
+            var total = 0f
+            for (f in 0 until numFrames) total += weightMaps[f][i]
+            if (total > 0f) {
+                for (f in 0 until numFrames) weightMaps[f][i] /= total
+            } else {
+                for (f in 0 until numFrames) weightMaps[f][i] = 1f / numFrames
+            }
+        }
+
+        val ghostMask = detectGhostRegions(frames, width, height)
+        for (i in 0 until n) {
+            if (ghostMask[i]) {
+                for (f in 0 until numFrames) {
+                    weightMaps[f][i] = if (f == baseIdx) 1f else 0f
+                }
+            }
+        }
+
+        return fusionWithPyramid(frames, weightMaps, width, height, levels)
     }
 
     fun alignFrame(reference: IntArray, target: IntArray, width: Int, height: Int, tileSize: Int = 16, searchRadius: Int = 4): IntArray {
@@ -274,5 +423,229 @@ class HdrProcessor {
         val g = (pixel shr 8) and 0xFF
         val b = pixel and 0xFF
         return (r * 77 + g * 150 + b * 29) shr 8
+    }
+
+    fun mertensFusionPyramid(frames: List<IntArray>, width: Int, height: Int, levels: Int = 4): IntArray {
+        val numFrames = frames.size
+        if (numFrames == 0) return IntArray(0)
+        if (numFrames == 1) return frames[0].copyOf()
+
+        val n = width * height
+        val weightMaps = Array(numFrames) { FloatArray(n) }
+
+        for (f in 0 until numFrames) {
+            val pixels = frames[f]
+            val luminance = FloatArray(n)
+            for (i in 0 until n) {
+                val r = ((pixels[i] shr 16) and 0xFF) / 255f
+                val g = ((pixels[i] shr 8) and 0xFF) / 255f
+                val b = (pixels[i] and 0xFF) / 255f
+                luminance[i] = 0.299f * r + 0.587f * g + 0.114f * b
+            }
+
+            for (y in 0 until height) {
+                for (x in 0 until width) {
+                    val i = y * width + x
+                    val r = ((pixels[i] shr 16) and 0xFF) / 255f
+                    val g = ((pixels[i] shr 8) and 0xFF) / 255f
+                    val b = (pixels[i] and 0xFF) / 255f
+
+                    val contrast = (laplacianContrastWeight(luminance, width, height, x, y) + 0.001f)
+                    val saturation = (saturationWeight(r, g, b) + 0.001f)
+                    val exposure = (wellExposednessWeight(luminance[i]) + 0.001f)
+
+                    weightMaps[f][i] = contrast * saturation * exposure
+                }
+            }
+        }
+
+        for (i in 0 until n) {
+            var total = 0f
+            for (f in 0 until numFrames) total += weightMaps[f][i]
+            if (total > 0f) {
+                for (f in 0 until numFrames) weightMaps[f][i] /= total
+            } else {
+                for (f in 0 until numFrames) weightMaps[f][i] = 1f / numFrames
+            }
+        }
+
+        val ghostMask = detectGhostRegions(frames, width, height)
+        val baseIdx = numFrames / 2
+        for (i in 0 until n) {
+            if (ghostMask[i]) {
+                for (f in 0 until numFrames) {
+                    weightMaps[f][i] = if (f == baseIdx) 1f else 0f
+                }
+            }
+        }
+
+        return fusionWithPyramid(frames, weightMaps, width, height, levels)
+    }
+
+    private fun fusionWithPyramid(frames: List<IntArray>, weightMaps: Array<FloatArray>, width: Int, height: Int, levels: Int = 4): IntArray {
+        val numFrames = frames.size
+        val n = width * height
+        val actualLevels = computeActualLevels(width, height, levels)
+
+        var accumR: MutableList<FloatArray>? = null
+        var accumG: MutableList<FloatArray>? = null
+        var accumB: MutableList<FloatArray>? = null
+
+        for (f in 0 until numFrames) {
+            val frameR = FloatArray(n) { ((frames[f][it] shr 16) and 0xFF).toFloat() }
+            val frameG = FloatArray(n) { ((frames[f][it] shr 8) and 0xFF).toFloat() }
+            val frameB = FloatArray(n) { (frames[f][it] and 0xFF).toFloat() }
+
+            val wGaussPyramid = buildGaussianPyramid(weightMaps[f], width, height, actualLevels)
+            val rLapPyramid = buildLaplacianPyramid(frameR, width, height, actualLevels)
+            val gLapPyramid = buildLaplacianPyramid(frameG, width, height, actualLevels)
+            val bLapPyramid = buildLaplacianPyramid(frameB, width, height, actualLevels)
+
+            if (accumR == null) {
+                accumR = MutableList(rLapPyramid.size) { FloatArray(rLapPyramid[it].size) }
+                accumG = MutableList(gLapPyramid.size) { FloatArray(gLapPyramid[it].size) }
+                accumB = MutableList(bLapPyramid.size) { FloatArray(bLapPyramid[it].size) }
+            }
+
+            for (lev in 0 until rLapPyramid.size) {
+                val levelSize = minOf(wGaussPyramid[lev].size, rLapPyramid[lev].size)
+                for (i in 0 until levelSize) {
+                    val w = wGaussPyramid[lev][i]
+                    accumR!![lev][i] += rLapPyramid[lev][i] * w
+                    accumG!![lev][i] += gLapPyramid[lev][i] * w
+                    accumB!![lev][i] += bLapPyramid[lev][i] * w
+                }
+            }
+        }
+
+        val resultR = reconstructFromLaplacian(accumR!!, width, height)
+        val resultG = reconstructFromLaplacian(accumG!!, width, height)
+        val resultB = reconstructFromLaplacian(accumB!!, width, height)
+
+        val result = IntArray(n)
+        for (i in 0 until n) {
+            val r = resultR[i].toInt().coerceIn(0, 255)
+            val g = resultG[i].toInt().coerceIn(0, 255)
+            val b = resultB[i].toInt().coerceIn(0, 255)
+            result[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+
+        return result
+    }
+
+    private fun computeActualLevels(w: Int, h: Int, requested: Int): Int {
+        var minDim = minOf(w, h)
+        var maxLevels = 0
+        while (minDim >= 2) { minDim /= 2; maxLevels++ }
+        return minOf(requested, maxLevels)
+    }
+
+    private fun reconstructFromLaplacian(pyramid: List<FloatArray>, origW: Int, origH: Int): FloatArray {
+        var currentW = origW
+        var currentH = origH
+        val dims = mutableListOf<Pair<Int, Int>>()
+        dims.add(Pair(currentW, currentH))
+        for (l in 0 until pyramid.size - 1) {
+            currentW /= 2; currentH /= 2
+            dims.add(Pair(currentW, currentH))
+        }
+
+        var current = pyramid.last().copyOf()
+        var curW = dims.last().first
+        var curH = dims.last().second
+
+        for (lev in pyramid.size - 2 downTo 0) {
+            val targetW = dims[lev].first
+            val targetH = dims[lev].second
+            val upsampled = FloatArray(targetW * targetH)
+            if (curW < 2 || curH < 2) {
+                val v = if (current.isNotEmpty()) current[0] else 0f
+                upsampled.fill(v)
+            } else {
+                for (y in 0 until targetH) {
+                    for (x in 0 until targetW) {
+                        val srcX = x.toFloat() / targetW * curW - 0.5f
+                        val srcY = y.toFloat() / targetH * curH - 0.5f
+                        val x0 = srcX.toInt().coerceIn(0, curW - 2)
+                        val y0 = srcY.toInt().coerceIn(0, curH - 2)
+                        val fx = (srcX - x0).coerceIn(0f, 1f)
+                        val fy = (srcY - y0).coerceIn(0f, 1f)
+                        val v00 = current[y0 * curW + x0]
+                        val v10 = current[y0 * curW + x0 + 1]
+                        val v01 = current[(y0 + 1) * curW + x0]
+                        val v11 = current[(y0 + 1) * curW + x0 + 1]
+                        upsampled[y * targetW + x] = v00 * (1f - fx) * (1f - fy) + v10 * fx * (1f - fy) +
+                            v01 * (1f - fx) * fy + v11 * fx * fy
+                    }
+                }
+            }
+            val lap = pyramid[lev]
+            current = FloatArray(targetW * targetH) { upsampled[it] + lap[it] }
+            curW = targetW; curH = targetH
+        }
+
+        return current
+    }
+
+    private fun buildGaussianPyramid(data: FloatArray, w: Int, h: Int, levels: Int): List<FloatArray> {
+        val pyramid = mutableListOf(data)
+        var currentW = w; var currentH = h
+        var current = data
+        for (l in 0 until levels) {
+            val nextW = currentW / 2; val nextH = currentH / 2
+            if (nextW < 1 || nextH < 1) break
+            val next = FloatArray(nextW * nextH)
+            for (y in 0 until nextH) {
+                for (x in 0 until nextW) {
+                    val sx = x * 2; val sy = y * 2
+                    var sum = current[sy * currentW + sx]
+                    var count = 1
+                    if (sx + 1 < currentW) { sum += current[sy * currentW + sx + 1]; count++ }
+                    if (sy + 1 < currentH) { sum += current[(sy + 1) * currentW + sx]; count++ }
+                    if (sx + 1 < currentW && sy + 1 < currentH) { sum += current[(sy + 1) * currentW + sx + 1]; count++ }
+                    next[y * nextW + x] = sum / count
+                }
+            }
+            pyramid.add(next)
+            current = next; currentW = nextW; currentH = nextH
+        }
+        return pyramid
+    }
+
+    private fun buildLaplacianPyramid(data: FloatArray, w: Int, h: Int, levels: Int): List<FloatArray> {
+        val gaussPyramid = buildGaussianPyramid(data, w, h, levels)
+        val laplacian = mutableListOf<FloatArray>()
+        var currentW = w; var currentH = h
+        for (l in 0 until gaussPyramid.size - 1) {
+            val nextW = currentW / 2; val nextH = currentH / 2
+            val upsampled = FloatArray(currentW * currentH)
+            val coarse = gaussPyramid[l + 1]
+            if (nextW < 2 || nextH < 2) {
+                val v = if (coarse.isNotEmpty()) coarse[0] else 0f
+                upsampled.fill(v)
+            } else {
+                for (y in 0 until currentH) {
+                    for (x in 0 until currentW) {
+                        val srcX = x.toFloat() / currentW * nextW - 0.5f
+                        val srcY = y.toFloat() / currentH * nextH - 0.5f
+                        val x0 = srcX.toInt().coerceIn(0, nextW - 2)
+                        val y0 = srcY.toInt().coerceIn(0, nextH - 2)
+                        val fx = (srcX - x0).coerceIn(0f, 1f)
+                        val fy = (srcY - y0).coerceIn(0f, 1f)
+                        val v00 = coarse[y0 * nextW + x0]
+                        val v10 = coarse[y0 * nextW + x0 + 1]
+                        val v01 = coarse[(y0 + 1) * nextW + x0]
+                        val v11 = coarse[(y0 + 1) * nextW + x0 + 1]
+                        upsampled[y * currentW + x] = v00 * (1f - fx) * (1f - fy) + v10 * fx * (1f - fy) +
+                            v01 * (1f - fx) * fy + v11 * fx * fy
+                    }
+                }
+            }
+            val lap = FloatArray(currentW * currentH) { gaussPyramid[l][it] - upsampled[it] }
+            laplacian.add(lap)
+            currentW = nextW; currentH = nextH
+        }
+        laplacian.add(gaussPyramid.last())
+        return laplacian
     }
 }

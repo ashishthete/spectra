@@ -28,9 +28,11 @@ fun TopControlBar(
     flashMode: FlashMode,
     timerSeconds: Int,
     aspectRatio: AspectRatio,
+    megapixels: Int = 12,
     onFlashToggle: () -> Unit,
     onTimerToggle: () -> Unit,
     onAspectToggle: () -> Unit,
+    onMegapixelToggle: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -59,6 +61,13 @@ fun TopControlBar(
             label = "Ratio",
             isActive = aspectRatio != AspectRatio.RATIO_4_3,
             onClick = onAspectToggle
+        )
+
+        TopButton(
+            icon = "${megapixels}",
+            label = "MP",
+            isActive = megapixels > 12,
+            onClick = onMegapixelToggle
         )
     }
 }

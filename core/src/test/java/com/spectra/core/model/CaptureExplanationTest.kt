@@ -98,4 +98,62 @@ class CaptureExplanationTest {
         )
         assertThat(explanation.isHdrApplied).isTrue()
     }
+
+    @Test
+    fun `stage labels map correctly`() {
+        val explanation = CaptureExplanation(
+            iso = 400,
+            shutterSpeedNs = 8_000_000L,
+            sceneLabel = "PORTRAIT",
+            lightingLabel = "INDOOR",
+            appliedStages = listOf("noise_reduction", "tone_curve", "portrait_bokeh", "skin_protection"),
+            hdrFrameCount = 0
+        )
+        val labels = explanation.stageLabels
+        assertThat(labels).hasSize(4)
+        assertThat(labels[0]).contains("noise")
+        assertThat(labels[1]).contains("tone")
+        assertThat(labels[2]).contains("depth")
+        assertThat(labels[3]).contains("skin")
+    }
+
+    @Test
+    fun `hdr stage label includes frame count`() {
+        val explanation = CaptureExplanation(
+            iso = 100,
+            shutterSpeedNs = 4_000_000L,
+            sceneLabel = "LANDSCAPE",
+            lightingLabel = "BRIGHT",
+            appliedStages = listOf("hdr_bracket"),
+            hdrFrameCount = 5
+        )
+        assertThat(explanation.stageLabels[0]).contains("5-frame")
+    }
+
+    @Test
+    fun `processing badge includes active features`() {
+        val explanation = CaptureExplanation(
+            iso = 800,
+            shutterSpeedNs = 16_000_000L,
+            sceneLabel = "PORTRAIT",
+            lightingLabel = "LOW",
+            isHdrApplied = true,
+            isPortraitBokeh = true,
+            beautyApplied = true
+        )
+        assertThat(explanation.processingBadge).contains("HDR")
+        assertThat(explanation.processingBadge).contains("Portrait")
+        assertThat(explanation.processingBadge).contains("Beauty")
+    }
+
+    @Test
+    fun `empty processing badge shows Auto`() {
+        val explanation = CaptureExplanation(
+            iso = 100,
+            shutterSpeedNs = 4_000_000L,
+            sceneLabel = "",
+            lightingLabel = ""
+        )
+        assertThat(explanation.processingBadge).isEqualTo("Auto")
+    }
 }

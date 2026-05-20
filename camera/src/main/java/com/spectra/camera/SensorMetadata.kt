@@ -4,7 +4,8 @@ data class SensorMetadata(
     val iso: Int = 0,
     val exposureTimeNs: Long = 0L,
     val focusDistanceDiopters: Float = 0f,
-    val colorTemperatureK: Int = 0
+    val colorTemperatureK: Int = 0,
+    val estimatedLux: Float = -1f
 ) {
     val shutterSpeedDenominator: Int
         get() = if (exposureTimeNs > 0) {

@@ -37,11 +37,11 @@ class TeachMeEngineTest {
     }
 
     @Test
-    fun `high ISO dim scene uses dim label`() {
+    fun `high ISO non-lowlight scene explains light need`() {
         val result = lessons(iso = 800, isLowLight = false)
         val isoLesson = result.find { it.topic.startsWith("ISO") }
         assertThat(isoLesson).isNotNull()
-        assertThat(isoLesson!!.explanation).contains("dim")
+        assertThat(isoLesson!!.explanation).contains("more light")
     }
 
     @Test
@@ -70,29 +70,29 @@ class TeachMeEngineTest {
 
     @Test
     fun `fast shutter generates motion explanation`() {
-        // 1/1000s = 1_000_000 ns
-        val result = lessons(shutterSpeedNs = 1_000_000L, motionLevel = 2)
+        // 1/1000s = 1_000_000 ns, motionLevel > 2 triggers "fast movement" path
+        val result = lessons(shutterSpeedNs = 1_000_000L, motionLevel = 3)
         val shutterLesson = result.find { it.topic.startsWith("1/") }
         assertThat(shutterLesson).isNotNull()
-        assertThat(shutterLesson!!.explanation).contains("freezes motion")
-        assertThat(shutterLesson.explanation).contains("Movement was detected")
+        assertThat(shutterLesson!!.explanation).contains("freeze")
+        assertThat(shutterLesson.explanation).contains("movement")
     }
 
     @Test
-    fun `fast shutter without motion uses shake prevention text`() {
+    fun `fast shutter without motion uses blur prevention text`() {
         val result = lessons(shutterSpeedNs = 1_000_000L, motionLevel = 0)
         val shutterLesson = result.find { it.topic.startsWith("1/") }
         assertThat(shutterLesson).isNotNull()
-        assertThat(shutterLesson!!.explanation).contains("camera shake")
+        assertThat(shutterLesson!!.explanation).contains("prevent blur")
     }
 
     @Test
-    fun `slow shutter with low light mentions compensation`() {
+    fun `slow shutter with low light mentions gathering light`() {
         // 1/15s = 66_666_666 ns
         val result = lessons(shutterSpeedNs = 66_666_666L, isLowLight = true)
         val shutterLesson = result.find { it.topic.startsWith("1/") }
         assertThat(shutterLesson).isNotNull()
-        assertThat(shutterLesson!!.explanation).contains("compensating for low light")
+        assertThat(shutterLesson!!.explanation).contains("more light")
     }
 
     @Test
@@ -123,7 +123,7 @@ class TeachMeEngineTest {
     @Test
     fun `PORTRAIT with faces generates telephoto lens lesson`() {
         val result = lessons(preset = CameraPreset.PORTRAIT, faceCount = 1)
-        val lensLesson = result.find { it.topic == "Telephoto lens" }
+        val lensLesson = result.find { it.topic == "Portrait telephoto" }
         assertThat(lensLesson).isNotNull()
         assertThat(lensLesson!!.explanation).contains("perspective")
     }

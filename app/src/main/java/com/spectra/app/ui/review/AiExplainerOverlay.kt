@@ -50,22 +50,32 @@ fun AiExplainerOverlay(
                     .padding(16.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "AI",
-                        color = HudColors.accent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "WHAT AI DID",
-                        color = HudColors.accent,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        letterSpacing = 1.5.sp
-                    )
+                    if (explanation.isTrueScene) {
+                        Text(
+                            text = "TRUE SCENE",
+                            color = Color(0xFF4CAF50),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    } else {
+                        Text(
+                            text = "AI",
+                            color = HudColors.accent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "WHAT AI DID",
+                            color = HudColors.accent,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.5.sp
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -109,7 +119,12 @@ fun AiExplainerOverlay(
                     }
                 }
 
-                if (explanation.isHdrApplied || explanation.isPortraitBokeh || explanation.isNightMode) {
+                if (explanation.isTrueScene) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AiBadge("TRUE SCENE", Color(0xFF4CAF50))
+                    }
+                } else if (explanation.isHdrApplied || explanation.isPortraitBokeh || explanation.isNightMode) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (explanation.isHdrApplied) AiBadge("HDR")
@@ -123,17 +138,17 @@ fun AiExplainerOverlay(
 }
 
 @Composable
-private fun AiBadge(label: String) {
+private fun AiBadge(label: String, color: Color = HudColors.accent) {
     Text(
         text = label,
-        color = HudColors.accent,
+        color = color,
         fontSize = 9.sp,
         fontWeight = FontWeight.Bold,
         fontFamily = FontFamily.Monospace,
         letterSpacing = 0.5.sp,
         modifier = Modifier
             .clip(RoundedCornerShape(4.dp))
-            .background(HudColors.accent.copy(alpha = 0.15f))
+            .background(color.copy(alpha = 0.15f))
             .padding(horizontal = 6.dp, vertical = 2.dp)
     )
 }

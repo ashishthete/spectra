@@ -10,7 +10,7 @@ import kotlin.math.sign
 object ImageEnhancer {
 
     data class EnhanceParams(
-        val guidedFilterRadius: Int = 8,
+        val guidedFilterRadius: Int = 16,
         val guidedFilterEps: Float = 0.04f,
         val baseCompression: Float = 1.3f,
         val detailBoost: Float = 1.1f,
@@ -188,14 +188,12 @@ object ImageEnhancer {
     }
 
     private fun isoAdaptiveStrength(iso: Int): Float {
-        return when {
-            iso <= 200 -> 1.0f
-            iso <= 400 -> 0.8f
-            iso <= 800 -> 0.5f
-            iso <= 1600 -> 0.25f
-            iso <= 3200 -> 0.1f
-            else -> 0f
-        }
+        if (iso <= 100) return 1.0f
+        if (iso >= 6400) return 0f
+        val logIso = kotlin.math.ln(iso.toFloat())
+        val logMin = kotlin.math.ln(100f)
+        val logMax = kotlin.math.ln(6400f)
+        return (1f - (logIso - logMin) / (logMax - logMin)).coerceIn(0f, 1f)
     }
 
     private fun isoAdaptiveNoiseFloor(iso: Int): Float {
@@ -420,20 +418,6 @@ object ImageEnhancer {
             }
         }
         return result
-    }
-
-    private fun applySaturationCorrection(pixels: IntArray, scale: Float) {
-        for (i in pixels.indices) {
-            val a = (pixels[i] shr 24) and 0xFF
-            val r = ((pixels[i] shr 16) and 0xFF).toFloat()
-            val g = ((pixels[i] shr 8) and 0xFF).toFloat()
-            val b = (pixels[i] and 0xFF).toFloat()
-            val luma = 0.299f * r + 0.587f * g + 0.114f * b
-            val nr = (luma + (r - luma) * scale).coerceIn(0f, 255f).toInt()
-            val ng = (luma + (g - luma) * scale).coerceIn(0f, 255f).toInt()
-            val nb = (luma + (b - luma) * scale).coerceIn(0f, 255f).toInt()
-            pixels[i] = (a shl 24) or (nr shl 16) or (ng shl 8) or nb
-        }
     }
 
     private fun applyWarmthShift(pixels: IntArray, shift: Float) {

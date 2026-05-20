@@ -27,9 +27,10 @@ data class CameraSettings(
             shutterSpeedDenominator: Int = 125,
             whiteBalanceKelvin: Int = 5500,
             exposureCompensation: Float = 0f,
-            focusDistance: Float = 0f
+            focusDistance: Float = 0f,
+            maxIso: Int = 3200
         ) = CameraSettings(
-            iso = iso.coerceIn(50, 3200),
+            iso = iso.coerceIn(50, maxIso),
             shutterSpeedDenominator = shutterSpeedDenominator,
             whiteBalanceKelvin = whiteBalanceKelvin.coerceIn(2300, 10000),
             exposureCompensation = exposureCompensation.coerceIn(-3f, 3f),

@@ -40,7 +40,7 @@ fun BeautyToggle(
         ) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .border(
                         width = 1.5.dp,

@@ -57,18 +57,55 @@ fun SettingsReadout(
                 fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.End
             )
-        } else if (actualIso > 0) {
-            // AUTO label
+        } else if (settingsDisplayMode == SettingsDisplayMode.SMART_AUTO) {
             Text(
-                text = "AUTO",
+                text = "AI AUTO",
                 color = HudColors.accent,
                 fontSize = 8.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 textAlign = TextAlign.End
             )
+            if (actualIso > 0) {
+                val shutterDenom = if (actualShutterNs > 0) {
+                    (1_000_000_000L / actualShutterNs).toInt().coerceIn(1, 32000)
+                } else 0
+                val shutterText = if (shutterDenom > 1) "1/${shutterDenom}s" else if (shutterDenom == 1) "1s" else "—"
+                Text(
+                    text = "ISO $actualIso · $shutterText",
+                    color = HudColors.accent.copy(alpha = 0.7f),
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.End
+                )
+                if (actualColorTemperature > 0) {
+                    Text(
+                        text = "${actualColorTemperature}K",
+                        color = HudColors.accent.copy(alpha = 0.5f),
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.End
+                    )
+                }
+            } else {
+                Text(
+                    text = "${aiRecommendedSettings.formattedIso} · ${aiRecommendedSettings.formattedShutterSpeed}",
+                    color = HudColors.textMuted.copy(alpha = 0.5f),
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.End
+                )
+            }
+        } else if (actualIso > 0) {
+            Text(
+                text = "AUTO",
+                color = HudColors.textSecondary,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                textAlign = TextAlign.End
+            )
 
-            // Actual sensor values
             val shutterDenom = if (actualShutterNs > 0) {
                 (1_000_000_000L / actualShutterNs).toInt().coerceIn(1, 32000)
             } else 0
@@ -81,7 +118,6 @@ fun SettingsReadout(
                 textAlign = TextAlign.End
             )
 
-            // AI recommendation subtitle — only when meaningfully different
             val aiIso = aiRecommendedSettings.iso
             val aiShutterDenom = aiRecommendedSettings.shutterSpeedDenominator
             val isoDiffRatio = if (actualIso > 0) abs(aiIso - actualIso).toFloat() / actualIso else 0f

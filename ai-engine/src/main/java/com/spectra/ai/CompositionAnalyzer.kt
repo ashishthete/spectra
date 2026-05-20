@@ -59,6 +59,8 @@ class CompositionAnalyzer @Inject constructor() {
         val saliency = FloatArray(s * s)
 
         val lum = FloatArray(s * s)
+        val rg = FloatArray(s * s)
+        val by = FloatArray(s * s)
         val scaleX = width.toFloat() / s
         val scaleY = height.toFloat() / s
         for (sy in 0 until s) {
@@ -66,21 +68,26 @@ class CompositionAnalyzer @Inject constructor() {
                 val srcX = (sx * scaleX).toInt().coerceIn(0, width - 1)
                 val srcY = (sy * scaleY).toInt().coerceIn(0, height - 1)
                 val pixel = pixels[srcY * width + srcX]
-                val r = (pixel shr 16) and 0xFF
-                val g = (pixel shr 8) and 0xFF
-                val b = pixel and 0xFF
-                lum[sy * s + sx] = (0.299f * r + 0.587f * g + 0.114f * b)
+                val r = ((pixel shr 16) and 0xFF).toFloat()
+                val g = ((pixel shr 8) and 0xFF).toFloat()
+                val b = (pixel and 0xFF).toFloat()
+                lum[sy * s + sx] = 0.299f * r + 0.587f * g + 0.114f * b
+                rg[sy * s + sx] = r - g
+                by[sy * s + sx] = b - (r + g) / 2f
             }
         }
 
         val scales = intArrayOf(2, 4, 8)
         for (y in 0 until s) {
             for (x in 0 until s) {
-                val centerLum = lum[y * s + x]
+                val idx = y * s + x
+                val centerLum = lum[idx]
+                val centerRg = rg[idx]
+                val centerBy = by[idx]
                 var totalContrast = 0f
                 for (radius in scales) {
-                    var surroundSum = 0f
-                    var surroundCount = 0
+                    var sLum = 0f; var sRg = 0f; var sBy = 0f
+                    var count = 0
                     for (dy in -radius..radius) {
                         for (dx in -radius..radius) {
                             if (dx == 0 && dy == 0) continue
@@ -88,17 +95,20 @@ class CompositionAnalyzer @Inject constructor() {
                             val nx = x + dx
                             val ny = y + dy
                             if (nx in 0 until s && ny in 0 until s) {
-                                surroundSum += lum[ny * s + nx]
-                                surroundCount++
+                                val ni = ny * s + nx
+                                sLum += lum[ni]; sRg += rg[ni]; sBy += by[ni]
+                                count++
                             }
                         }
                     }
-                    if (surroundCount > 0) {
-                        val surroundMean = surroundSum / surroundCount
-                        totalContrast += abs(centerLum - surroundMean)
+                    if (count > 0) {
+                        val lumDiff = abs(centerLum - sLum / count)
+                        val rgDiff = abs(centerRg - sRg / count)
+                        val byDiff = abs(centerBy - sBy / count)
+                        totalContrast += lumDiff + 0.5f * rgDiff + 0.5f * byDiff
                     }
                 }
-                saliency[y * s + x] = totalContrast / scales.size
+                saliency[idx] = totalContrast / scales.size
             }
         }
 
@@ -159,10 +169,7 @@ class CompositionAnalyzer @Inject constructor() {
         val isCenteredX = abs(cx - 0.5f) < 0.08f
         val isCenteredY = abs(cy - 0.5f) < 0.08f
         if (isCenteredX && isCenteredY) {
-            return Pair(
-                "Subject is centered — try placing them off-center",
-                ArrowDirection.NONE
-            )
+            return Pair(null, ArrowDirection.NONE)
         }
 
         val thirds = listOf(

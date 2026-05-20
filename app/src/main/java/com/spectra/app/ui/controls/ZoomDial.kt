@@ -164,7 +164,7 @@ private fun LensStopButton(
 
     Box(
         modifier = Modifier
-            .size(46.dp)
+            .size(48.dp)
             .clip(CircleShape)
             .background(bgColor)
             .then(

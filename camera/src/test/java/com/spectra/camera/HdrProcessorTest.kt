@@ -30,31 +30,31 @@ class HdrProcessorTest {
     }
 
     @Test
-    fun `bracket under-exposure is approximately base divided by 2_83`() {
+    fun `bracket under-exposure is approximately base divided by 4`() {
         val baseNs = 10_000_000L
         val result = HdrProcessor.computeBracketExposures(baseNs, 200)
-        // -1.5EV = base / 2.83 ≈ 3_533_569
-        val expected = (baseNs / 2.83f).toLong()
+        // -2.0EV = base / 4.0 = 2_500_000
+        val expected = (baseNs / 4.0f).toLong()
         assertThat(result[0].first).isEqualTo(expected)
     }
 
     @Test
-    fun `bracket over-exposure is approximately base multiplied by 2_83`() {
+    fun `bracket over-exposure is approximately base multiplied by 4`() {
         val baseNs = 10_000_000L
         val result = HdrProcessor.computeBracketExposures(baseNs, 200)
-        // +1.5EV = base * 2.83 ≈ 28_300_000
-        val expected = (baseNs * 2.83f).toLong()
+        // +2.0EV = base * 4.0 = 40_000_000
+        val expected = (baseNs * 4.0f).toLong()
         assertThat(result[2].first).isEqualTo(expected)
     }
 
     @Test
-    fun `bracket spread is approximately 3 EV total`() {
+    fun `bracket spread is approximately 4 EV total`() {
         val baseNs = 10_000_000L
         val result = HdrProcessor.computeBracketExposures(baseNs, 200)
         val ratio = result[2].first.toFloat() / result[0].first.toFloat()
-        // ±1.5EV means total spread of 3EV, ratio should be ~2.83^2 ≈ 8.0
-        assertThat(ratio).isGreaterThan(7.0f)
-        assertThat(ratio).isLessThan(9.0f)
+        // ±2.0EV means total spread of 4EV, ratio should be 4^2 = 16.0
+        assertThat(ratio).isGreaterThan(15.0f)
+        assertThat(ratio).isLessThan(17.0f)
     }
 
     @Test
@@ -179,30 +179,23 @@ class HdrProcessorTest {
 
     @Test
     fun `detectGhostRegions detects moved object`() {
-        val w = 16; val h = 16; val n = w * h
+        val w = 32; val h = 32; val n = w * h
 
-        // Frame 1: bright object at top-left quadrant
+        // Frame 1: gradient background, bright object at top-left
         val frame1 = IntArray(n) { i ->
             val x = i % w; val y = i / w
-            if (x < 8 && y < 8) {
-                (0xFF shl 24) or (240 shl 16) or (240 shl 8) or 240
-            } else {
-                (0xFF shl 24) or (30 shl 16) or (30 shl 8) or 30
-            }
+            val v = if (x < 16 && y < 16) 240 else (40 + y * 4).coerceAtMost(160)
+            (0xFF shl 24) or (v shl 16) or (v shl 8) or v
         }
 
-        // Frame 2: bright object moved to bottom-right quadrant
+        // Frame 2: same gradient, bright object at bottom-right
         val frame2 = IntArray(n) { i ->
             val x = i % w; val y = i / w
-            if (x >= 8 && y >= 8) {
-                (0xFF shl 24) or (240 shl 16) or (240 shl 8) or 240
-            } else {
-                (0xFF shl 24) or (30 shl 16) or (30 shl 8) or 30
-            }
+            val v = if (x >= 16 && y >= 16) 240 else (40 + y * 4).coerceAtMost(160)
+            (0xFF shl 24) or (v shl 16) or (v shl 8) or v
         }
 
         val mask = HdrProcessor.detectGhostRegions(listOf(frame1, frame2), w, h)
-        // Some pixels should be marked as ghosted since MTBs differ
         assertThat(mask.any { it }).isTrue()
     }
 
@@ -330,5 +323,154 @@ class HdrProcessorTest {
             val r = (pixel shr 16) and 0xFF
             assertThat(r).isIn(0..255)
         }
+    }
+
+    @Test
+    fun `semanticMertensFusion falls back to standard for single frame`() {
+        val w = 8; val h = 8; val n = w * h
+        val frame = IntArray(n) { (0xFF shl 24) or (128 shl 16) or (128 shl 8) or 128 }
+        val result = processor.semanticMertensFusion(listOf(frame), w, h)
+        assertThat(result).hasLength(n)
+    }
+
+    @Test
+    fun `semanticMertensFusion produces valid output with sky scene`() {
+        val w = 32; val h = 32; val n = w * h
+        val darkFrame = IntArray(n) { i ->
+            val y = i / w
+            if (y < 12) (0xFF shl 24) or (50 shl 16) or (80 shl 8) or 160
+            else (0xFF shl 24) or (30 shl 16) or (50 shl 8) or 20
+        }
+        val midFrame = IntArray(n) { i ->
+            val y = i / w
+            if (y < 12) (0xFF shl 24) or (100 shl 16) or (140 shl 8) or 220
+            else (0xFF shl 24) or (80 shl 16) or (120 shl 8) or 60
+        }
+        val brightFrame = IntArray(n) { i ->
+            val y = i / w
+            if (y < 12) (0xFF shl 24) or (220 shl 16) or (230 shl 8) or 250
+            else (0xFF shl 24) or (160 shl 16) or (200 shl 8) or 120
+        }
+        val result = processor.semanticMertensFusion(listOf(darkFrame, midFrame, brightFrame), w, h)
+        assertThat(result).hasLength(n)
+        for (pixel in result) {
+            val r = (pixel shr 16) and 0xFF
+            assertThat(r).isIn(0..255)
+        }
+    }
+
+    @Test
+    fun `mertensFusionPyramid produces valid output`() {
+        val w = 16; val h = 16; val n = w * h
+        val dark = IntArray(n) { (0xFF shl 24) or (60 shl 16) or (60 shl 8) or 60 }
+        val mid = IntArray(n) { (0xFF shl 24) or (128 shl 16) or (128 shl 8) or 128 }
+        val bright = IntArray(n) { (0xFF shl 24) or (220 shl 16) or (220 shl 8) or 220 }
+        val result = processor.mertensFusionPyramid(listOf(dark, mid, bright), w, h)
+        assertThat(result).hasLength(n)
+        for (pixel in result) {
+            val r = (pixel shr 16) and 0xFF
+            assertThat(r).isIn(0..255)
+        }
+    }
+
+    @Test
+    fun `mertensFusionPyramid single frame returns copy`() {
+        val w = 8; val h = 8; val n = w * h
+        val frame = IntArray(n) { (0xFF shl 24) or (100 shl 16) or (100 shl 8) or 100 }
+        val result = processor.mertensFusionPyramid(listOf(frame), w, h)
+        assertThat(result).hasLength(n)
+        for (i in result.indices) assertThat(result[i]).isEqualTo(frame[i])
+    }
+
+    @Test
+    fun `wellExposednessWeight with custom target shifts peak`() {
+        val defaultPeak = HdrProcessor.wellExposednessWeight(0.5f)
+        val skyPeak = HdrProcessor.wellExposednessWeight(0.35f, targetLum = 0.35f)
+        val fgPeak = HdrProcessor.wellExposednessWeight(0.6f, targetLum = 0.6f)
+        assertThat(defaultPeak).isGreaterThan(0.9f)
+        assertThat(skyPeak).isGreaterThan(0.9f)
+        assertThat(fgPeak).isGreaterThan(0.9f)
+    }
+
+    @Test
+    fun `3-frame bracket always includes at least 3 frames`() {
+        val result = HdrProcessor.computeBracketExposures(10_000_000L, 200)
+        assertThat(result.size).isAtLeast(3)
+    }
+
+    @Test
+    fun `3-frame bracket always includes base exposure`() {
+        val baseNs = 16_000_000L
+        val result = HdrProcessor.computeBracketExposures(baseNs, 400)
+        val baseFrame = result.find { it.first == baseNs && it.second == 400 }
+        assertThat(baseFrame).isNotNull()
+    }
+
+    @Test
+    fun `3-frame bracket spacing is approximately 2 EV`() {
+        val baseNs = 10_000_000L
+        val result = HdrProcessor.computeBracketExposures(baseNs, 200)
+        val underRatio = baseNs.toFloat() / result[0].first
+        val overRatio = result[2].first.toFloat() / baseNs
+        assertThat(underRatio).isWithin(0.5f).of(4.0f)
+        assertThat(overRatio).isWithin(0.5f).of(4.0f)
+    }
+
+    @Test
+    fun `5-frame bracket returns 5 frames`() {
+        val result = HdrProcessor.computeBracketExposures5Frame(10_000_000L, 200)
+        assertThat(result).hasSize(5)
+    }
+
+    @Test
+    fun `5-frame bracket includes base exposure`() {
+        val baseNs = 10_000_000L
+        val result = HdrProcessor.computeBracketExposures5Frame(baseNs, 200)
+        assertThat(result[2].first).isEqualTo(baseNs)
+        assertThat(result[2].second).isEqualTo(200)
+    }
+
+    @Test
+    fun `5-frame bracket is ordered underexposed to overexposed`() {
+        val result = HdrProcessor.computeBracketExposures5Frame(10_000_000L, 200)
+        for (i in 0 until result.size - 1) {
+            assertThat(result[i].first).isLessThan(result[i + 1].first)
+        }
+    }
+
+    @Test
+    fun `5-frame bracket spread is approximately 6 EV total`() {
+        val result = HdrProcessor.computeBracketExposures5Frame(10_000_000L, 200)
+        val ratio = result[4].first.toFloat() / result[0].first.toFloat()
+        assertThat(ratio).isGreaterThan(50f)
+        assertThat(ratio).isLessThan(80f)
+    }
+
+    @Test
+    fun `highlight bracket with evBias shifts base exposure`() {
+        val baseNs = 10_000_000L
+        val result = HdrProcessor.computeBracketExposuresForHighlights(baseNs, 200, -0.5f)
+        assertThat(result).hasSize(3)
+        assertThat(result[1].first).isLessThan(baseNs)
+    }
+
+    @Test
+    fun `computeHighlightEvBias returns zero for low contrast`() {
+        assertThat(HdrProcessor.computeHighlightEvBias(0.1f)).isEqualTo(0f)
+    }
+
+    @Test
+    fun `computeHighlightEvBias returns negative for high contrast`() {
+        assertThat(HdrProcessor.computeHighlightEvBias(0.8f)).isLessThan(0f)
+    }
+
+    @Test
+    fun `bracket on S24-like 1_10 EV step device produces correct exposure times`() {
+        val baseNs = 8_333_333L
+        val baseIso = 100
+        val result = HdrProcessor.computeBracketExposures(baseNs, baseIso)
+        assertThat(result[0].first).isEqualTo((baseNs / 4.0f).toLong())
+        assertThat(result[1].first).isEqualTo(baseNs)
+        assertThat(result[2].first).isEqualTo((baseNs * 4.0f).toLong())
     }
 }

@@ -12,6 +12,10 @@ import javax.inject.Singleton
 @Singleton
 class CoachingEngine @Inject constructor() {
 
+    companion object {
+        const val SHOOT_NOW_TEXT = "Shoot now"
+    }
+
     private var lastHint: CoachingHint? = null
     private var lastHintTimeMs: Long = 0L
     private val hintCooldownMs = 10000L
@@ -20,13 +24,37 @@ class CoachingEngine @Inject constructor() {
     private var horizonDismissCount: Int = 0
     private var lastHorizonHintWasShown: Boolean = false
 
+    private val dismissedHintTypes = mutableMapOf<String, Int>()
+    private val followedHints = mutableSetOf<String>()
+    private var shotsThisSession = 0
+    private var shotsFollowingCoaching = 0
+
+    fun onCaptured(wasCoached: Boolean) {
+        shotsThisSession++
+        if (wasCoached) shotsFollowingCoaching++
+    }
+
+    private fun isHintFatigued(hintKey: String): Boolean {
+        val dismissals = dismissedHintTypes[hintKey] ?: 0
+        return dismissals >= 3
+    }
+
     fun generateCoaching(analysis: SceneAnalysis, preset: CameraPreset, composition: CompositionResult? = null, rollAngle: Float = 0f): CoachingHint? {
         if (!analysis.isStable) return null
         if (hintsShownThisSession > 20) return null
 
         val now = System.currentTimeMillis()
         if (now - lastDismissTimeMs < 15000L) return null
-        if (lastHint != null && now - lastHintTimeMs < hintCooldownMs) return lastHint
+
+        if (preset != CameraPreset.PRO && preset != CameraPreset.TRUE_SCENE) {
+            val shootNow = isShootNowMoment(analysis)
+            if (shootNow && (lastHint?.text != SHOOT_NOW_TEXT || now - lastHintTimeMs > 5000L)) {
+                val shootHint = CoachingHint(SHOOT_NOW_TEXT, ArrowDirection.NONE, priority = 10)
+                lastHint = shootHint
+                lastHintTimeMs = now
+                return shootHint
+            }
+        }
 
         var hint = when {
             analysis.motionSource == MotionDetector.MotionSource.CAMERA_SHAKE ->
@@ -40,6 +68,15 @@ class CoachingEngine @Inject constructor() {
             analysis.lighting == LightingCondition.BACKLIT -> backlitHint(preset)
             analysis.lighting == LightingCondition.MIXED -> mixedLightingHint()
             else -> presetHint(preset, analysis)
+        }
+
+        if (lastHint != null && now - lastHintTimeMs < hintCooldownMs) {
+            val newPriority = hint?.priority ?: -1
+            if (newPriority > (lastHint?.priority ?: 0)) {
+                // High-priority hint preempts stale lower-priority hint
+            } else {
+                return lastHint
+            }
         }
 
         // Composition/horizon coaching (lower priority than motion/backlit hints)
@@ -59,6 +96,13 @@ class CoachingEngine @Inject constructor() {
                     horizonDismissCount = 0
                 }
                 lastHorizonHintWasShown = false
+            }
+        }
+
+        if (hint != null) {
+            val hintKey = hint.text.take(20)
+            if (isHintFatigued(hintKey)) {
+                hint = null
             }
         }
 
@@ -92,6 +136,10 @@ class CoachingEngine @Inject constructor() {
     fun onDismissed() {
         if (lastHorizonHintWasShown) {
             horizonDismissCount++
+        }
+        val hintKey = lastHint?.text?.take(20) ?: ""
+        if (hintKey.isNotEmpty()) {
+            dismissedHintTypes[hintKey] = (dismissedHintTypes[hintKey] ?: 0) + 1
         }
         lastDismissTimeMs = System.currentTimeMillis()
         lastHint = null
@@ -183,6 +231,7 @@ class CoachingEngine @Inject constructor() {
             CameraPreset.ACTION -> actionHint(analysis)
             CameraPreset.MACRO -> macroHint(analysis)
             CameraPreset.PRO -> null
+            CameraPreset.TRUE_SCENE -> null
         }
     }
 
@@ -219,11 +268,20 @@ class CoachingEngine @Inject constructor() {
 
     private fun portraitHint(analysis: SceneAnalysis): CoachingHint? {
         val faces = analysis.faceData
+        val primary = faces.primaryFace
+        val faceFillRatio = if (primary != null) primary.bounds.width() * primary.bounds.height() else 0f
         return when {
             faces.faceCount == 0 ->
                 CoachingHint("Position your subject in the frame", ArrowDirection.NONE, priority = 7)
             faces.anyBlinking ->
                 CoachingHint("Eyes closed — try again", ArrowDirection.NONE, priority = 8)
+            faceFillRatio > 0.15f && analysis.distanceRange == DistanceRange.NEAR ->
+                CoachingHint(
+                    "Step back and use 3x — face will look more natural",
+                    ArrowDirection.NONE,
+                    priority = 9,
+                    action = CoachingAction.SwitchLens(LensId.TELEPHOTO_3X)
+                )
             faces.isGroupShot && !faces.allEyesOpen ->
                 CoachingHint("Check that everyone's eyes are open", ArrowDirection.NONE, priority = 6)
             faces.isGroupShot ->
@@ -239,12 +297,16 @@ class CoachingEngine @Inject constructor() {
                 CoachingHint("Step back slightly for a flattering perspective", ArrowDirection.NONE, priority = 6)
             analysis.lighting == LightingCondition.HARSH_MIDDAY ->
                 CoachingHint("Harsh light — find open shade for softer look", ArrowDirection.NONE, priority = 5)
+            analysis.lighting == LightingCondition.BACKLIT ->
+                CoachingHint("Backlit — turn subject toward the light or use fill", ArrowDirection.NONE, priority = 6)
             analysis.lighting == LightingCondition.GOLDEN_HOUR ->
                 CoachingHint("Beautiful light — angle face toward the sun", ArrowDirection.NONE, priority = 4)
             analysis.lighting == LightingCondition.LOW_LIGHT ->
                 CoachingHint("Low light — have subject face the brightest source", ArrowDirection.NONE, priority = 6)
             faces.isCoupleShot ->
                 CoachingHint("Get them close — touching shoulders looks natural", ArrowDirection.NONE, priority = 3)
+            analysis.distanceRange == DistanceRange.MID ->
+                CoachingHint("Move subject away from background for stronger separation", ArrowDirection.NONE, priority = 3)
             else -> CoachingHint("Tap the eyes to lock focus there", ArrowDirection.NONE, priority = 3)
         }
     }
@@ -378,6 +440,87 @@ class CoachingEngine @Inject constructor() {
         return "Move camera $dirText to place subject on thirds"
     }
 
+    private fun isShootNowMoment(analysis: SceneAnalysis): Boolean {
+        if (!analysis.isStable) return false
+        if (analysis.lighting == LightingCondition.BACKLIT || analysis.lighting == LightingCondition.MIXED) return false
+        var score = 0f
+        val faces = analysis.faceData
+
+        score += when (analysis.motionLevel) {
+            MotionLevel.STATIC -> 0.2f
+            MotionLevel.SLOW -> 0.15f
+            MotionLevel.MODERATE -> 0.05f
+            else -> 0f
+        }
+
+        if (faces.hasFaces) {
+            if (faces.allEyesOpen) score += 0.15f
+            if (faces.anyoneSmiling) score += 0.15f
+            else if (!faces.anyBlinking) score += 0.05f
+        }
+
+        score += when (analysis.lighting) {
+            LightingCondition.GOLDEN_HOUR -> 0.2f
+            LightingCondition.BRIGHT_DAYLIGHT, LightingCondition.OVERCAST -> 0.15f
+            LightingCondition.ARTIFICIAL, LightingCondition.BLUE_HOUR -> 0.1f
+            LightingCondition.LOW_LIGHT -> 0.05f
+            else -> 0.1f
+        }
+
+        score += (analysis.confidence * 0.3f).coerceAtMost(0.3f)
+
+        val threshold = if (System.currentTimeMillis() - lastHintTimeMs > 10000L) 0.5f else 0.6f
+        return score >= threshold
+    }
+
+    fun generateVideoCoaching(
+        isRecording: Boolean,
+        motionLevel: MotionLevel,
+        motionSource: MotionDetector.MotionSource,
+        hasFaces: Boolean,
+        recordingDurationMs: Long
+    ): CoachingHint? {
+        if (!isRecording) return null
+
+        return when {
+            motionSource == MotionDetector.MotionSource.CAMERA_SHAKE && motionLevel >= MotionLevel.MODERATE ->
+                CoachingHint("Walking shake — hold phone with both hands", ArrowDirection.STEADY, priority = 9)
+            recordingDurationMs < 3000L ->
+                CoachingHint("Hold 3 seconds before moving", ArrowDirection.NONE, priority = 6)
+            motionSource == MotionDetector.MotionSource.PANNING && motionLevel >= MotionLevel.FAST ->
+                CoachingHint("Pan slower — smooth motion looks cinematic", ArrowDirection.NONE, priority = 7)
+            hasFaces && motionLevel == MotionLevel.STATIC ->
+                CoachingHint("Subject steady — tap face to lock tracking", ArrowDirection.NONE, priority = 4)
+            else -> null
+        }
+    }
+
+    fun generateCompositionCoachingForPeople(
+        faceCount: Int,
+        primaryFaceBounds: android.graphics.RectF?,
+        imageWidth: Float,
+        imageHeight: Float
+    ): CoachingHint? {
+        if (faceCount == 0 || primaryFaceBounds == null) return null
+
+        val faceCenterY = (primaryFaceBounds.top + primaryFaceBounds.bottom) / 2f
+        val headroomRatio = primaryFaceBounds.top
+
+        if (headroomRatio < 0.05f) {
+            return CoachingHint("Too little headroom — lower the camera", ArrowDirection.DOWN, priority = 5)
+        }
+        if (headroomRatio > 0.35f) {
+            return CoachingHint("Too much headroom — raise the camera", ArrowDirection.UP, priority = 4)
+        }
+
+        val faceBottom = primaryFaceBounds.bottom
+        if (faceBottom > 0.9f) {
+            return CoachingHint("Face too low — tilt up slightly", ArrowDirection.UP, priority = 5)
+        }
+
+        return null
+    }
+
     fun reset() {
         lastHint = null
         lastHintTimeMs = 0L
@@ -385,5 +528,9 @@ class CoachingEngine @Inject constructor() {
         lastDismissTimeMs = 0L
         horizonDismissCount = 0
         lastHorizonHintWasShown = false
+        dismissedHintTypes.clear()
+        followedHints.clear()
+        shotsThisSession = 0
+        shotsFollowingCoaching = 0
     }
 }

@@ -58,11 +58,19 @@ object ToneCurveEngine {
     fun identityCurve(): IntArray = IntArray(256) { it }
 
     fun sCurve(strength: Float): IntArray {
+        val k = strength * 12.0
         return IntArray(256) { i ->
             val t = i / 255.0
-            val smoothstep = t * t * (3.0 - 2.0 * t)
-            val sCurved = t + strength * (smoothstep - t)
-            (sCurved * 255.0).roundToInt().coerceIn(0, 255)
+            if (k < 0.01) {
+                i
+            } else {
+                val s = 1.0 / (1.0 + Math.exp(-k * (t - 0.5)))
+                val s0 = 1.0 / (1.0 + Math.exp(k * 0.5))
+                val s1 = 1.0 / (1.0 + Math.exp(-k * 0.5))
+                val sigmoid = (s - s0) / (s1 - s0)
+                val blended = t + strength * (sigmoid - t)
+                (blended * 255.0).roundToInt().coerceIn(0, 255)
+            }
         }
     }
 
@@ -166,10 +174,14 @@ object ToneCurveEngine {
         }
     }
 
-    fun hableFilmic(x: Float): Float {
+    fun hableFilmic(x: Float): Float = hableFilmicAdaptive(x, sceneKey = 0.18f)
+
+    fun hableFilmicAdaptive(x: Float, sceneKey: Float = 0.18f): Float {
+        val keyScale = (0.18f / sceneKey.coerceIn(0.04f, 0.8f))
+        val scaled = x * keyScale
         val A = 0.15f; val B = 0.50f; val C = 0.10f
         val D = 0.20f; val E = 0.02f; val F = 0.30f
-        return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F
+        return ((scaled * (A * scaled + C * B) + D * E) / (scaled * (A * scaled + B) + D * F)) - E / F
     }
 
     fun highlightShoulder(input: Int, shoulderStart: Int, maxOutput: Int, strength: Float): Int {
@@ -188,7 +200,11 @@ object ToneCurveEngine {
     }
 
     fun apply(bitmap: Bitmap, style: PhotoStyle) {
-        if (style == PhotoStyle.NATURAL) return
+        apply(bitmap, style, skinHueProtection = false, chromaCompression = 0f)
+    }
+
+    fun apply(bitmap: Bitmap, style: PhotoStyle, skinHueProtection: Boolean, chromaCompression: Float = 0f, faceRects: List<android.graphics.RectF> = emptyList()) {
+        if (style == PhotoStyle.NATURAL && !skinHueProtection && chromaCompression <= 0f) return
 
         val startTime = System.nanoTime()
         val w = bitmap.width
@@ -196,26 +212,126 @@ object ToneCurveEngine {
         val pixels = IntArray(w * h)
         bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
 
-        // Prefer 3D LUT when loaded; fall back to 1D per-channel curves.
         val lutEntry = luts?.get(style)
-        if (lutEntry != null) {
-            val (lutSize, lutData) = lutEntry
-            Lut3D.applyToPixels(pixels, lutData, lutSize)
-            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
-            val elapsed = (System.nanoTime() - startTime) / 1_000_000
-            Log.d(TAG, "3D LUT applied: style=$style, ${elapsed}ms")
-        } else {
-            val curves = getCurvesForStyle(style)
-            for (i in pixels.indices) {
-                val pixel = pixels[i]
-                val r = curves.r[(pixel shr 16) and 0xFF]
-                val g = curves.g[(pixel shr 8) and 0xFF]
-                val b = curves.b[pixel and 0xFF]
-                pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        if (style != PhotoStyle.NATURAL) {
+            if (lutEntry != null) {
+                val (lutSize, lutData) = lutEntry
+                srgbToLinearPixels(pixels)
+                Lut3D.applyToPixels(pixels, lutData, lutSize)
+                linearToSrgbPixels(pixels)
+            } else {
+                val curves = getCurvesForStyle(style)
+                for (i in pixels.indices) {
+                    val pixel = pixels[i]
+                    val r = curves.r[(pixel shr 16) and 0xFF]
+                    val g = curves.g[(pixel shr 8) and 0xFF]
+                    val b = curves.b[pixel and 0xFF]
+                    pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                }
             }
-            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
-            val elapsed = (System.nanoTime() - startTime) / 1_000_000
-            Log.d(TAG, "1D tone curve applied (fallback): style=$style, ${elapsed}ms")
         }
+
+        if (skinHueProtection || chromaCompression > 0f) {
+            applyColorAppearance(pixels, w, h, skinHueProtection, chromaCompression, faceRects)
+        }
+
+        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+        val elapsed = (System.nanoTime() - startTime) / 1_000_000
+        Log.d(TAG, "Tone applied: style=$style, skin=$skinHueProtection, chroma=$chromaCompression, ${elapsed}ms")
+    }
+
+    private fun applyColorAppearance(pixels: IntArray, width: Int, height: Int, skinProtect: Boolean, chromaCompress: Float, faceRects: List<android.graphics.RectF>) {
+        for (i in pixels.indices) {
+            val pixel = pixels[i]
+            var r = ((pixel shr 16) and 0xFF).toFloat()
+            var g = ((pixel shr 8) and 0xFF).toFloat()
+            var b = (pixel and 0xFF).toFloat()
+
+            if (chromaCompress > 0f) {
+                val lum = 0.299f * r + 0.587f * g + 0.114f * b
+                val lumNorm = lum / 255f
+                val compress = if (lumNorm > 0.85f || lumNorm < 0.15f) chromaCompress else chromaCompress * 0.3f
+                r = lum + (r - lum) * (1f - compress)
+                g = lum + (g - lum) * (1f - compress)
+                b = lum + (b - lum) * (1f - compress)
+            }
+
+            if (skinProtect) {
+                val x = i % width
+                val y = i / width
+                val nx = x.toFloat() / width
+                val ny = y.toFloat() / height
+                val inFaceRegion = faceRects.isEmpty() || faceRects.any { nx in it.left..it.right && ny in it.top..it.bottom }
+
+                if (inFaceRegion) {
+                    val ri = r.toInt().coerceIn(0, 255)
+                    val gi = g.toInt().coerceIn(0, 255)
+                    val bi = b.toInt().coerceIn(0, 255)
+                    val ycbcr = ColorSpaceUtils.rgbToYCbCr(ri, gi, bi)
+                    if (ColorSpaceUtils.isSkinPixelYCbCr(ycbcr[1], ycbcr[2])) {
+                        val lab = ColorSpaceUtils.rgbToLab(ri, gi, bi)
+                        val corrected = ColorSpaceUtils.correctSkinToneLab(lab[0], lab[1], lab[2])
+                        val rgb = ColorSpaceUtils.labToRgb(corrected[0], corrected[1], corrected[2])
+                        r = rgb[0].toFloat()
+                        g = rgb[1].toFloat()
+                        b = rgb[2].toFloat()
+                    }
+                }
+            }
+
+            pixels[i] = (0xFF shl 24) or
+                (r.toInt().coerceIn(0, 255) shl 16) or
+                (g.toInt().coerceIn(0, 255) shl 8) or
+                b.toInt().coerceIn(0, 255)
+        }
+    }
+
+    private val srgbToLinearLut = FloatArray(256) { i ->
+        val c = i / 255.0
+        val linear = if (c <= 0.04045) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4)
+        (linear * 255.0).toFloat()
+    }
+
+    private val linearToSrgbLut = FloatArray(256) { i ->
+        val c = i / 255.0
+        val srgb = if (c <= 0.0031308) 12.92 * c else 1.055 * Math.pow(c, 1.0 / 2.4) - 0.055
+        (srgb * 255.0).toFloat()
+    }
+
+    private val bayerDither = floatArrayOf(-0.375f, 0.125f, 0.375f, -0.125f)
+
+    private fun srgbToLinearPixels(pixels: IntArray) {
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            val d = bayerDither[i and 3]
+            val r = (srgbToLinearLut[(p shr 16) and 0xFF] + d).roundToInt().coerceIn(0, 255)
+            val g = (srgbToLinearLut[(p shr 8) and 0xFF] + d).roundToInt().coerceIn(0, 255)
+            val b = (srgbToLinearLut[p and 0xFF] + d).roundToInt().coerceIn(0, 255)
+            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+    }
+
+    private fun linearToSrgbPixels(pixels: IntArray) {
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            val d = bayerDither[i and 3]
+            val r = (linearToSrgbLut[(p shr 16) and 0xFF] + d).roundToInt().coerceIn(0, 255)
+            val g = (linearToSrgbLut[(p shr 8) and 0xFF] + d).roundToInt().coerceIn(0, 255)
+            val b = (linearToSrgbLut[p and 0xFF] + d).roundToInt().coerceIn(0, 255)
+            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+    }
+
+    private fun skinHue(r: Float, g: Float, b: Float): Float {
+        val maxC = maxOf(r, g, b)
+        val minC = minOf(r, g, b)
+        val delta = maxC - minC
+        if (delta < 1f) return 0f
+        val hue = when (maxC) {
+            r -> 60f * ((g - b) / delta % 6f)
+            g -> 60f * ((b - r) / delta + 2f)
+            else -> 60f * ((r - g) / delta + 4f)
+        }
+        return if (hue < 0f) hue + 360f else hue
     }
 }

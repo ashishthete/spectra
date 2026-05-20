@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spectra.app.ui.theme.HudColors
 import com.spectra.core.model.PhotoStyle
+import androidx.compose.foundation.layout.defaultMinSize
 
 @Composable
 fun StyleSelector(
@@ -41,6 +42,7 @@ fun StyleSelector(
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 modifier = Modifier
+                    .defaultMinSize(minHeight = 48.dp)
                     .clickable { onStyleSelected(style) }
                     .padding(horizontal = 12.dp, vertical = 10.dp)
             )

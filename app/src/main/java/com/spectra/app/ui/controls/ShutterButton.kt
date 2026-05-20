@@ -6,7 +6,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -22,12 +23,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import android.media.AudioManager
+import android.media.MediaActionSound
 import com.spectra.app.ui.theme.HudColors
 import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ShutterButton(
     onTap: () -> Unit,
@@ -36,6 +43,11 @@ fun ShutterButton(
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
+    val shutterSound = remember {
+        MediaActionSound().also { it.load(MediaActionSound.SHUTTER_CLICK) }
+    }
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
     var isPressed by remember { mutableStateOf(false) }
     var showFlash by remember { mutableStateOf(false) }
 
@@ -68,25 +80,22 @@ fun ShutterButton(
             .graphicsLayer(scaleX = scale, scaleY = scale)
             .clip(CircleShape)
             .border(2.5.dp, HudColors.accent.copy(alpha = 0.9f), CircleShape)
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        showFlash = true
-                        onTap()
-                    },
-                    onLongPress = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongPressStart()
-                    },
-                    onPress = {
-                        isPressed = true
-                        tryAwaitRelease()
-                        isPressed = false
-                        onLongPressEnd()
+            .semantics { contentDescription = "Shutter" }
+            .combinedClickable(
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    val ringerMode = audioManager?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL
+                    if (ringerMode != AudioManager.RINGER_MODE_SILENT) {
+                        shutterSound.play(MediaActionSound.SHUTTER_CLICK)
                     }
-                )
-            }
+                    showFlash = true
+                    onTap()
+                },
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongPressStart()
+                }
+            )
     ) {
         Box(
             modifier = Modifier

@@ -86,6 +86,11 @@ class FaceDetectorWrapper @Inject constructor() {
         )
     }
 
+    fun updateSkinTones(updatedFaces: List<DetectedFace>) {
+        val current = _faceData.value
+        _faceData.value = current.copy(faces = updatedFaces)
+    }
+
     fun release() {
         _faceData.value = FaceData.EMPTY
         detector.close()

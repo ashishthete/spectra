@@ -82,7 +82,7 @@ class CompositionAnalyzerTest {
     }
 
     @Test
-    fun `analyze generates move hint for off-thirds subject`() {
+    fun `analyze accepts centered subject without suggestion`() {
         val pixels = IntArray(128 * 128) { 0xFF101010.toInt() }
         for (y in 55..73) {
             for (x in 55..73) {
@@ -90,6 +90,14 @@ class CompositionAnalyzerTest {
             }
         }
         val result = analyzer.analyze(pixels, 128, 128, emptyList(), 0f)
+        assertNull(result.suggestionText)
+    }
+
+    @Test
+    fun `analyze generates move hint for off-thirds face`() {
+        val pixels = IntArray(128 * 128) { 0xFF808080.toInt() }
+        val face = rectF(0.05f, 0.05f, 0.15f, 0.15f)
+        val result = analyzer.analyze(pixels, 128, 128, listOf(face), 0f)
         assertFalse(result.suggestionText.isNullOrEmpty())
     }
 

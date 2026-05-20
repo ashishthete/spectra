@@ -11,7 +11,7 @@ class PresetConsolidationTest {
 
     @Test
     fun `exactly 8 presets exist`() {
-        assertEquals(8, CameraPreset.entries.size)
+        assertEquals(9, CameraPreset.entries.size)
     }
 
     @Test

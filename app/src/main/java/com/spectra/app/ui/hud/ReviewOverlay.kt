@@ -118,6 +118,7 @@ fun SmartReviewOverlay(
     onSaveEnhanced: () -> Unit,
     onSaveBoth: () -> Unit,
     onDiscard: () -> Unit,
+    cropSuggestions: List<com.spectra.core.model.CropSuggestionData> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -217,19 +218,42 @@ fun SmartReviewOverlay(
                     .padding(horizontal = 8.dp, vertical = 4.dp)
             )
 
-            Row(
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(bottom = 32.dp, start = 16.dp, end = 16.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                ReviewButton(icon = "✕", label = "Discard", onClick = onDiscard)
-                ReviewButton(icon = "◯", label = "Raw", onClick = onSaveOriginal)
-                if (aiEnhancedUri != null) {
-                    ReviewButton(icon = "✦", label = "Processed", onClick = onSaveEnhanced)
-                    ReviewButton(icon = "✓✓", label = "Both", isPrimary = true, onClick = onSaveBoth)
+                if (cropSuggestions.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.padding(bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        cropSuggestions.forEach { crop ->
+                            Text(
+                                text = "${crop.aspectRatio} ${crop.reason}",
+                                color = HudColors.textSecondary,
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier
+                                    .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ReviewButton(icon = "✕", label = "Discard", onClick = onDiscard)
+                    ReviewButton(icon = "◯", label = "Raw", onClick = onSaveOriginal)
+                    if (aiEnhancedUri != null) {
+                        ReviewButton(icon = "✦", label = "Processed", onClick = onSaveEnhanced)
+                        ReviewButton(icon = "✓✓", label = "Both", isPrimary = true, onClick = onSaveBoth)
+                    }
                 }
             }
         }

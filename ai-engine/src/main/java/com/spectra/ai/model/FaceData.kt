@@ -33,7 +33,10 @@ data class DetectedFace(
     val headEulerAngleX: Float = 0f,
     val headEulerAngleY: Float = 0f,
     val headEulerAngleZ: Float = 0f,
-    val trackingId: Int? = null
+    val trackingId: Int? = null,
+    val skinToneShade: Int = 0,
+    val skinToneAwbShiftK: Int = 0,
+    val skinToneEvComp: Float = 0f
 )
 
 data class PointF(val x: Float, val y: Float)

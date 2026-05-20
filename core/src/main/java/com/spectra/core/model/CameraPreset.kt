@@ -13,5 +13,6 @@ enum class CameraPreset(
     LANDSCAPE("Landscape", "LNDS", preferredLens = LensId.MAIN),
     ACTION("Action", "ACTN", preferredLens = LensId.MAIN),
     MACRO("Macro", "MCRO", preferredLens = LensId.MAIN),
-    PRO("Pro", "PRO", preferredLens = LensId.MAIN);
+    PRO("Pro", "PRO", preferredLens = LensId.MAIN),
+    TRUE_SCENE("True Scene", "TRUE", preferredLens = LensId.MAIN);
 }

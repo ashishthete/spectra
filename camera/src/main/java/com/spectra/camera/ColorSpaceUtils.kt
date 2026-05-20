@@ -52,7 +52,17 @@ object ColorSpaceUtils {
     }
 
     fun isSkinPixelYCbCr(cb: Int, cr: Int): Boolean {
-        return cb in 78..126 && cr in 134..172
+        return cb in 70..135 && cr in 125..180
+    }
+
+    fun correctSkinToneLab(l: Float, a: Float, b: Float, maxDeltaE: Float = 2.0f): FloatArray {
+        // Remove L*a*b* Snapping (Undertone Preservation).
+        // Only gently lift shadows if the luminance is under-exposed.
+        var correctedL = l
+        if (l in 10f..45f) {
+            correctedL = l + (45f - l) * 0.3f
+        }
+        return floatArrayOf(correctedL, a, b)
     }
 
     private fun srgbToLinear(c: Double): Double =
