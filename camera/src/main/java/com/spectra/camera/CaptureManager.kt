@@ -682,7 +682,7 @@ class CaptureManager @Inject constructor(
                     stages.add("tone_curve")
                 } else {
                     try {
-                        applyLocalToneMap(enhanced, 0.5f)
+                        LocalToneMapper.apply(enhanced, strength = 0.7f, gamma = 0.85f, shadowLift = 0.1f)
                         stages.add("local_tone_map")
                         ToneCurveEngine.apply(enhanced, style, skinHueProtection = hasFaces, chromaCompression = 0.3f, faceRects = faceRects)
                     }
@@ -712,13 +712,41 @@ class CaptureManager @Inject constructor(
                 }
 
                 if (beautyLevel > 0 && faceRects.isNotEmpty()) {
-                    try { applyLabBeauty(enhanced, canvas, beautyLevel, faceRects); stages.add("beauty") }
-                    catch (_: OutOfMemoryError) { System.gc() }
+                    try {
+                        if (isPortraitMode) {
+                            // Frequency-separation beauty: preserves pores/detail, smooths blemishes
+                            val bw = enhanced.width; val bh = enhanced.height
+                            val bPixels = IntArray(bw * bh)
+                            enhanced.getPixels(bPixels, 0, bw, 0, 0, bw, bh)
+                            val bSkinMask = BeautyProcessor.buildSkinMask(bPixels, bw, bh, faceRects)
+                            val bStrength = beautyLevel / 3f  // 1->0.33, 2->0.67, 3->1.0
+                            BeautyProcessor.process(bPixels, bw, bh, bSkinMask, bStrength)
+                            enhanced.setPixels(bPixels, 0, bw, 0, 0, bw, bh)
+                            stages.add("freq_sep_beauty")
+                        } else {
+                            applyLabBeauty(enhanced, canvas, beautyLevel, faceRects)
+                            stages.add("beauty")
+                        }
+                    } catch (_: OutOfMemoryError) { System.gc() }
                 }
 
                 if (style != PhotoStyle.NATURAL) {
                     applyHighlightRolloffToBitmap(enhanced, style)
                     stages.add("highlight_rolloff")
+                }
+
+                // LUT color grading: from ProcessingParams or auto-mapped from PhotoStyle
+                val lutName = processing.colorGradingLut ?: LutEngine.lutForStyle(style.name)
+                if (lutName != null && lutName != "NEUTRAL") {
+                    try {
+                        val lw = enhanced.width; val lh = enhanced.height
+                        val lutPixels = IntArray(lw * lh)
+                        enhanced.getPixels(lutPixels, 0, lw, 0, 0, lw, lh)
+                        LutEngine.apply(lutPixels, lw, lh, lutName, strength = 0.6f)
+                        enhanced.setPixels(lutPixels, 0, lw, 0, 0, lw, lh)
+                        stages.add("lut_$lutName")
+                        Log.d("Pipeline", "LUT applied: $lutName @ 0.6 strength")
+                    } catch (_: OutOfMemoryError) { System.gc() }
                 }
 
                 if (style != PhotoStyle.NATURAL && captureIso < 3200) {
@@ -950,11 +978,11 @@ class CaptureManager @Inject constructor(
         val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         result.setPixels(outPixels, 0, w, 0, 0, w, h)
 
-        applyLocalToneMap(result, 0.5f)
+        LocalToneMapper.apply(result, strength = 0.7f, gamma = 0.85f, shadowLift = 0.1f)
         applyEnhanceColors(result)
 
         val stream = java.io.ByteArrayOutputStream()
-        result.compress(Bitmap.CompressFormat.JPEG, 95, stream)
+        result.compress(Bitmap.CompressFormat.JPEG, 97, stream)
         val jpegBytes = stream.toByteArray()
 
         result.recycle()
@@ -1125,7 +1153,7 @@ class CaptureManager @Inject constructor(
         result.setPixels(outPixels, 0, w, 0, 0, w, h)
 
         val stream = java.io.ByteArrayOutputStream()
-        result.compress(Bitmap.CompressFormat.JPEG, 95, stream)
+        result.compress(Bitmap.CompressFormat.JPEG, 97, stream)
         val jpegBytes = stream.toByteArray()
 
         bitmaps.forEach { it.recycle() }
@@ -1452,7 +1480,7 @@ class CaptureManager @Inject constructor(
             val result = Bitmap.createBitmap(subW, subH, Bitmap.Config.ARGB_8888)
             result.setPixels(fused, 0, subW, 0, 0, subW, subH)
             val stream = java.io.ByteArrayOutputStream()
-            result.compress(Bitmap.CompressFormat.JPEG, 95, stream)
+            result.compress(Bitmap.CompressFormat.JPEG, 97, stream)
             result.recycle()
             Log.d("CaptureManager", "HDR Mertens fusion: ${aligned.size} frames, ${subW}x${subH}")
             return Pair(stream.toByteArray(), frames[0].second)
@@ -1506,7 +1534,7 @@ class CaptureManager @Inject constructor(
         val result = Bitmap.createBitmap(fullW, fullH, Bitmap.Config.ARGB_8888)
         result.setPixels(fullPixels, 0, fullW, 0, 0, fullW, fullH)
         val stream = java.io.ByteArrayOutputStream()
-        result.compress(Bitmap.CompressFormat.JPEG, 95, stream)
+        result.compress(Bitmap.CompressFormat.JPEG, 97, stream)
         result.recycle()
 
         Log.d("CaptureManager", "HDR ratio-map fusion: ${aligned.size} frames, ${fullW}x${fullH} (fused at ${subW}x${subH})")
@@ -1634,8 +1662,8 @@ class CaptureManager @Inject constructor(
 
             if (isHdr) {
                 try {
-                    applyLocalToneMap(result, 0.5f)
-                    Log.d("CaptureManager", "Local tone mapping (bilateral decomposition) applied")
+                    LocalToneMapper.apply(result, strength = 0.7f, gamma = 0.85f, shadowLift = 0.1f)
+                    Log.d("CaptureManager", "Local tone mapping applied")
                 } catch (oom: OutOfMemoryError) {
                     Log.w("CaptureManager", "OOM in local tone map, skipping")
                     System.gc()
@@ -1723,7 +1751,18 @@ class CaptureManager @Inject constructor(
                 val beautyStart = System.nanoTime()
                 if (beautyLevel > 0) {
                     try {
-                        applyLabBeauty(result, canvas, beautyLevel, faceRects)
+                        if (isPortraitMode && faceRects.isNotEmpty()) {
+                            // Frequency-separation beauty for portrait: preserves skin detail
+                            val bw = result.width; val bh = result.height
+                            val bPixels = IntArray(bw * bh)
+                            result.getPixels(bPixels, 0, bw, 0, 0, bw, bh)
+                            val bSkinMask = BeautyProcessor.buildSkinMask(bPixels, bw, bh, faceRects)
+                            val bStrength = beautyLevel / 3f
+                            BeautyProcessor.process(bPixels, bw, bh, bSkinMask, bStrength)
+                            result.setPixels(bPixels, 0, bw, 0, 0, bw, bh)
+                        } else {
+                            applyLabBeauty(result, canvas, beautyLevel, faceRects)
+                        }
                     } catch (oom: OutOfMemoryError) {
                         Log.w("CaptureManager", "OOM in beauty processing, skipping")
                         System.gc()
@@ -1742,6 +1781,19 @@ class CaptureManager @Inject constructor(
                     }
                     highlightMs = (System.nanoTime() - highlightStart) / 1_000_000
                     cumulativeMs += highlightMs
+
+                    // Stage: LUT color grading
+                    val ppLutName = processing.colorGradingLut ?: LutEngine.lutForStyle(style.name)
+                    if (ppLutName != null && ppLutName != "NEUTRAL") {
+                        try {
+                            val lw = result.width; val lh = result.height
+                            val lutPixels = IntArray(lw * lh)
+                            result.getPixels(lutPixels, 0, lw, 0, 0, lw, lh)
+                            LutEngine.apply(lutPixels, lw, lh, ppLutName, strength = 0.6f)
+                            result.setPixels(lutPixels, 0, lw, 0, 0, lw, lh)
+                            Log.d("CaptureManager", "LUT color grading applied: $ppLutName")
+                        } catch (_: OutOfMemoryError) { System.gc() }
+                    }
 
                     // Stage: Bokeh
                     if (cumulativeMs > PROCESSING_BUDGET_MS) {
@@ -1880,83 +1932,6 @@ class CaptureManager @Inject constructor(
         }
 
         bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
-    }
-
-    private fun applyLocalToneMap(bitmap: android.graphics.Bitmap, compressionFactor: Float) {
-        val w = bitmap.width
-        val h = bitmap.height
-
-        val maxDim = 960
-        val needsDownsample = w > maxDim || h > maxDim
-        val scaleFactor = if (needsDownsample) maxDim.toFloat() / maxOf(w, h) else 1f
-        val sw = if (needsDownsample) (w * scaleFactor).toInt().coerceAtLeast(1) else w
-        val sh = if (needsDownsample) (h * scaleFactor).toInt().coerceAtLeast(1) else h
-
-        val smallBitmap = if (needsDownsample) {
-            Bitmap.createScaledBitmap(bitmap, sw, sh, true)
-        } else null
-        val smallPixels = IntArray(sw * sh)
-        (smallBitmap ?: bitmap).getPixels(smallPixels, 0, sw, 0, 0, sw, sh)
-
-        val luminance = FloatArray(sw * sh)
-        val logLum = FloatArray(sw * sh)
-        for (i in smallPixels.indices) {
-            val r = ((smallPixels[i] shr 16) and 0xFF) / 255f
-            val g = ((smallPixels[i] shr 8) and 0xFF) / 255f
-            val b = (smallPixels[i] and 0xFF) / 255f
-            luminance[i] = (0.299f * r + 0.587f * g + 0.114f * b).coerceAtLeast(0.001f)
-            logLum[i] = kotlin.math.ln(luminance[i])
-        }
-
-        val base = FloatArray(sw * sh)
-        System.arraycopy(logLum, 0, base, 0, logLum.size)
-        bilateralApprox(base, logLum, sw, sh, spatialRadius = 5, rangeSigma = 0.4f)
-
-        val detail = FloatArray(sw * sh)
-        for (i in detail.indices) {
-            detail[i] = logLum[i] - base[i]
-        }
-
-        val baseMean = base.average().toFloat()
-        for (i in base.indices) {
-            base[i] = baseMean + (base[i] - baseMean) * compressionFactor
-        }
-
-        val scaleMap = FloatArray(sw * sh)
-        for (i in smallPixels.indices) {
-            val newLum = kotlin.math.exp(base[i] + detail[i]).coerceIn(0.001f, 10f)
-            scaleMap[i] = if (luminance[i] > 0.001f) (newLum / luminance[i]).coerceIn(0.2f, 5f) else 1f
-        }
-
-        smallBitmap?.recycle()
-
-        val fullPixels = IntArray(w * h)
-        bitmap.getPixels(fullPixels, 0, w, 0, 0, w, h)
-
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                val i = y * w + x
-                val scale = if (needsDownsample) {
-                    val sx = (x * scaleFactor).toInt().coerceIn(0, sw - 1)
-                    val sy = (y * scaleFactor).toInt().coerceIn(0, sh - 1)
-                    scaleMap[sy * sw + sx]
-                } else {
-                    scaleMap[i]
-                }
-
-                val r = ((fullPixels[i] shr 16) and 0xFF)
-                val g = ((fullPixels[i] shr 8) and 0xFF)
-                val b = (fullPixels[i] and 0xFF)
-
-                val rOut = (r * scale).toInt().coerceIn(0, 255)
-                val gOut = (g * scale).toInt().coerceIn(0, 255)
-                val bOut = (b * scale).toInt().coerceIn(0, 255)
-
-                fullPixels[i] = (0xFF shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
-            }
-        }
-
-        bitmap.setPixels(fullPixels, 0, w, 0, 0, w, h)
     }
 
     fun analyzeSceneContrast(jpegBytes: ByteArray): Float {
