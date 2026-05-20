@@ -284,6 +284,7 @@ class SpectraCameraController @Inject constructor(
         val frontId = lensManager.getFrontCameraId() ?: return
 
         provider.unbindAll()
+        videoCapture = null
         val rotation = view.display?.rotation ?: Surface.ROTATION_0
 
         val cameraSelector = CameraSelector.Builder()
@@ -336,6 +337,7 @@ class SpectraCameraController @Inject constructor(
         }
 
         provider.unbindAll()
+        videoCapture = null
         val rotation = view.display?.rotation ?: Surface.ROTATION_0
         val cameraId = lensManager.getCameraId(lens)
         Log.d("SpectraCamera", "bindCamera: lens=$lens, cameraId=$cameraId")
@@ -624,6 +626,75 @@ class SpectraCameraController @Inject constructor(
     }
 
     fun isRecordingActive(): Boolean = activeRecording != null
+
+    fun ensureVideoBound() {
+        if (videoCapture != null) return
+        if (_isFrontCamera.value) {
+            bindFrontCameraForVideo()
+        } else {
+            bindForVideo()
+        }
+    }
+
+    @androidx.camera.camera2.interop.ExperimentalCamera2Interop
+    private fun bindFrontCameraForVideo() {
+        val provider = cameraProvider ?: return
+        val owner = lifecycleOwner ?: return
+        val view = previewView ?: return
+        val frontId = lensManager.getFrontCameraId() ?: return
+
+        provider.unbindAll()
+        val rotation = view.display?.rotation ?: Surface.ROTATION_0
+
+        val cameraSelector = CameraSelector.Builder()
+            .addCameraFilter { cameras ->
+                cameras.filter { Camera2CameraInfo.from(it).cameraId == frontId }
+            }
+            .build()
+
+        val preview = Preview.Builder()
+            .setTargetResolution(Size(1440, 1920))
+            .setTargetRotation(rotation)
+            .build()
+            .also { it.surfaceProvider = view.surfaceProvider }
+
+        val recorder = Recorder.Builder()
+            .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
+            .build()
+        videoCapture = VideoCapture.withOutput(recorder)
+
+        imageCapture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setTargetResolution(Size(4032, 3024))
+            .setTargetRotation(rotation)
+            .build()
+
+        val analysisBuilder = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setTargetRotation(rotation)
+
+        Camera2Interop.Extender(analysisBuilder)
+            .setSessionCaptureCallback(metadataCallback)
+
+        imageAnalysis = analysisBuilder.build()
+            .also { it.setAnalyzer(analysisExecutor, frameProvider) }
+
+        try {
+            camera = provider.bindToLifecycle(owner, cameraSelector, preview, videoCapture, imageCapture, imageAnalysis)
+            updateZoomBounds()
+            _isReady.value = true
+            Log.d("SpectraCamera", "bindFrontCameraForVideo: success")
+        } catch (e: Exception) {
+            Log.e("SpectraCamera", "bindFrontCameraForVideo: failed, trying without analysis", e)
+            try {
+                camera = provider.bindToLifecycle(owner, cameraSelector, preview, videoCapture, imageCapture)
+                updateZoomBounds()
+                _isReady.value = true
+            } catch (e2: Exception) {
+                Log.e("SpectraCamera", "bindFrontCameraForVideo: failed completely", e2)
+            }
+        }
+    }
 
     fun rebindCamera() {
         if (_isFrontCamera.value) {

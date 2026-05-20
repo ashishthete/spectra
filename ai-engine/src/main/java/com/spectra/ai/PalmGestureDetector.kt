@@ -27,8 +27,13 @@ class PalmGestureDetector @Inject constructor(
     private val _palmDetected = MutableStateFlow(false)
     val palmDetected: StateFlow<Boolean> = _palmDetected.asStateFlow()
 
-    private var consecutivePalmFrames = 0
-    private val requiredFrames = 3
+    private val _fistDetected = MutableStateFlow(false)
+    val fistDetected: StateFlow<Boolean> = _fistDetected.asStateFlow()
+
+    private var palmStartMs = 0L
+    private var fistStartMs = 0L
+    private val palmRequiredMs = 5000L
+    private val fistRequiredMs = 2000L
 
     fun initialize() {
         try {
@@ -58,19 +63,36 @@ class PalmGestureDetector @Inject constructor(
         try {
             val mpImage = BitmapImageBuilder(bitmap).build()
             val result = handLandmarker!!.detect(mpImage)
+            val now = System.currentTimeMillis()
 
-            val isOpenPalm = if (result.landmarks().isNotEmpty()) {
-                isOpenPalm(result.landmarks()[0])
-            } else false
-
-            if (isOpenPalm) {
-                consecutivePalmFrames++
-                if (consecutivePalmFrames >= requiredFrames) {
-                    _palmDetected.value = true
+            if (result.landmarks().isNotEmpty()) {
+                val landmarks = result.landmarks()[0]
+                val extended = countExtendedFingers(landmarks)
+                if (extended >= 4) {
+                    if (palmStartMs == 0L) palmStartMs = now
+                    fistStartMs = 0L
+                    _fistDetected.value = false
+                    if (now - palmStartMs >= palmRequiredMs) {
+                        _palmDetected.value = true
+                    }
+                } else if (extended <= 1) {
+                    if (fistStartMs == 0L) fistStartMs = now
+                    palmStartMs = 0L
+                    _palmDetected.value = false
+                    if (now - fistStartMs >= fistRequiredMs) {
+                        _fistDetected.value = true
+                    }
+                } else {
+                    palmStartMs = 0L
+                    fistStartMs = 0L
+                    _palmDetected.value = false
+                    _fistDetected.value = false
                 }
             } else {
-                consecutivePalmFrames = 0
+                palmStartMs = 0L
+                fistStartMs = 0L
                 _palmDetected.value = false
+                _fistDetected.value = false
             }
         } catch (e: Exception) {
             Log.w(TAG, "Hand detection failed", e)
@@ -79,13 +101,13 @@ class PalmGestureDetector @Inject constructor(
         }
     }
 
-    private fun isOpenPalm(landmarks: List<NormalizedLandmark>): Boolean {
-        if (landmarks.size < 21) return false
+    private fun countExtendedFingers(landmarks: List<NormalizedLandmark>): Int {
+        if (landmarks.size < 21) return -1
 
         val wrist = landmarks[0]
         val middleBase = landmarks[9]
         val palmSize = dist(wrist.x(), wrist.y(), middleBase.x(), middleBase.y())
-        if (palmSize < 0.05f) return false
+        if (palmSize < 0.05f) return -1
 
         val tips = intArrayOf(4, 8, 12, 16, 20)
         val bases = intArrayOf(2, 5, 9, 13, 17)
@@ -99,7 +121,7 @@ class PalmGestureDetector @Inject constructor(
             val baseDist = dist(base.x(), base.y(), wrist.x(), wrist.y())
             if (tipDist > baseDist * thresholds[i]) extendedCount++
         }
-        return extendedCount >= 4
+        return extendedCount
     }
 
     private fun dist(x1: Float, y1: Float, x2: Float, y2: Float): Float {
@@ -109,8 +131,10 @@ class PalmGestureDetector @Inject constructor(
     }
 
     fun resetDetection() {
-        consecutivePalmFrames = 0
+        palmStartMs = 0L
+        fistStartMs = 0L
         _palmDetected.value = false
+        _fistDetected.value = false
     }
 
     fun release() {

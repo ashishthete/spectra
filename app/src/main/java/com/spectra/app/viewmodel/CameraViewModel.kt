@@ -95,6 +95,7 @@ class CameraViewModel @Inject constructor(
     private var lastGoldenMomentCaptureMs: Long = 0L
     private val rackFocusEngine = com.spectra.camera.RackFocusEngine()
     private var lastAppliedSemiAuto: Boolean = false
+    private var enhancementJob: Job? = null
     private var palmCountdownJob: Job? = null
     private var palmDetectionFrameCount = 0
 
@@ -194,6 +195,12 @@ class CameraViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.Default) {
             frameProvider.frames.collectLatest { bitmap ->
                 val meta = _hudState.value
+                if (meta.palmGestureEnabled && palmCountdownJob == null && !_captureInProgress.value) {
+                    palmDetectionFrameCount++
+                    if (palmDetectionFrameCount % 3 == 0) {
+                        palmGestureDetector.detect(bitmap)
+                    }
+                }
                 try {
                     pipeline.faceDetector.detectFaces(bitmap, bitmap.width, bitmap.height)
                     pipeline.analyzeFrame(
@@ -238,19 +245,26 @@ class CameraViewModel @Inject constructor(
                 if (meta.mode == CameraMode.PRO && (meta.focusPeakingEnabled || meta.zebraEnabled || meta.falseColorEnabled)) {
                     computeProOverlays(bitmap, meta.focusPeakingEnabled, meta.zebraEnabled, meta.falseColorEnabled)
                 }
-                if (meta.palmGestureEnabled && palmCountdownJob == null && !_captureInProgress.value) {
-                    palmDetectionFrameCount++
-                    if (palmDetectionFrameCount % 3 == 0) {
-                        palmGestureDetector.detect(bitmap)
-                    }
-                }
             }
         }
 
         viewModelScope.launch {
             palmGestureDetector.palmDetected.collect { detected ->
                 if (detected && _hudState.value.palmGestureEnabled && palmCountdownJob == null && !_captureInProgress.value) {
-                    startPalmCountdown()
+                    if (_hudState.value.mode == CameraMode.VIDEO && _hudState.value.isRecording) {
+                        palmGestureDetector.resetDetection()
+                    } else {
+                        startPalmCountdown()
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            palmGestureDetector.fistDetected.collect { detected ->
+                if (detected && _hudState.value.palmGestureEnabled && _hudState.value.isRecording) {
+                    palmGestureDetector.resetDetection()
+                    toggleRecording()
                 }
             }
         }
@@ -701,6 +715,7 @@ class CameraViewModel @Inject constructor(
 
     fun togglePalmGesture() {
         val enabled = !_hudState.value.palmGestureEnabled
+        Log.d("CameraViewModel", "Palm gesture: $enabled")
         _hudState.update { it.copy(palmGestureEnabled = enabled, palmCountdown = 0) }
         if (!enabled) {
             palmCountdownJob?.cancel()
@@ -761,9 +776,21 @@ class CameraViewModel @Inject constructor(
         cameraController.setCaptureResolution(next)
     }
 
-    fun cycleLens() { cameraController.cycleLens() }
-    fun flipCamera() { cameraController.flipCamera() }
-    fun switchLens(lens: LensId) { cameraController.switchLens(lens) }
+    fun cycleLens() {
+        if (_hudState.value.isRecording) return
+        cameraController.cycleLens()
+    }
+    fun flipCamera() {
+        if (_hudState.value.isRecording) return
+        cameraController.flipCamera()
+        if (_hudState.value.mode == CameraMode.VIDEO) {
+            cameraController.ensureVideoBound()
+        }
+    }
+    fun switchLens(lens: LensId) {
+        if (_hudState.value.isRecording) return
+        cameraController.switchLens(lens)
+    }
 
 
     fun setMode(mode: CameraMode) {
@@ -773,7 +800,7 @@ class CameraViewModel @Inject constructor(
         }
         _hudState.update { it.copy(mode = mode, isManualOverride = false) }
         if (mode == CameraMode.VIDEO && previous != CameraMode.VIDEO) {
-            cameraController.bindForVideo()
+            cameraController.ensureVideoBound()
         } else if (mode != CameraMode.VIDEO && previous == CameraMode.VIDEO) {
             cameraController.rebindCamera()
         }
@@ -1096,7 +1123,8 @@ class CameraViewModel @Inject constructor(
                     )}
                     val originalUri = hdrUri
                     Log.d("CameraViewModel", "HDR saved: $originalUri, starting enhancement...")
-                    viewModelScope.launch {
+                    enhancementJob?.cancel()
+                    enhancementJob = viewModelScope.launch {
                         System.gc()
                         try {
                             val processingResult = captureManager.saveProcessedCopy(
@@ -1201,7 +1229,8 @@ class CameraViewModel @Inject constructor(
 
             val originalUri = result.bestOriginalUri
             Log.d("CameraViewModel", "Original saved: $originalUri, starting enhancement...")
-            viewModelScope.launch {
+            enhancementJob?.cancel()
+            enhancementJob = viewModelScope.launch {
                 System.gc()
                 try {
                     val processingResult = captureManager.saveProcessedCopy(
@@ -1275,6 +1304,8 @@ class CameraViewModel @Inject constructor(
     }
 
     fun dismissSmartReview() {
+        enhancementJob?.cancel()
+        enhancementJob = null
         smartCaptureFrames = null
         _hudState.update { it.copy(
             showSmartReview = false,
@@ -1342,6 +1373,7 @@ class CameraViewModel @Inject constructor(
 
     fun startRecording() {
         if (_hudState.value.isRecording) return
+        cameraController.ensureVideoBound()
         val started = cameraController.startRecording()
         if (started) {
             recordingStartTimeMs = System.currentTimeMillis()
