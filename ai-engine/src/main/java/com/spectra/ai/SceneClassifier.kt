@@ -45,6 +45,14 @@ class SceneClassifier @Inject constructor(
 
     private fun validateModelMetadata() {
         val interp = interpreter ?: return
+        val inputTensor = interp.getInputTensor(0)
+        val expectedBytes = 4 * inputSize * inputSize * 3
+        if (inputTensor.numBytes() != expectedBytes) {
+            Log.w("SceneClassifier", "Model input expects ${inputTensor.numBytes()} bytes but we produce $expectedBytes, falling back to heuristics")
+            interpreter?.close()
+            interpreter = null
+            return
+        }
         val outputShape = interp.getOutputTensor(0).shape()
         val outputDim = if (outputShape.size >= 2) outputShape[1] else outputShape[0]
         if (labelMap.isNotEmpty() && labelMap.size != outputDim) {
@@ -121,22 +129,28 @@ class SceneClassifier @Inject constructor(
     private fun classifyBase(bitmap: Bitmap, faceData: FaceData = FaceData.EMPTY): Pair<SceneType, Float> {
         val interp = interpreter
         if (interp != null && labelMap.isNotEmpty()) {
-            val safeBmp = if (bitmap.config == null || bitmap.colorSpace == null) {
-                bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return classifyHeuristic(bitmap, faceData)
-            } else bitmap
-            val resized = Bitmap.createScaledBitmap(safeBmp, inputSize, inputSize, true)
-            if (safeBmp !== bitmap) safeBmp.recycle()
-            val inputBuffer = bitmapToByteBuffer(resized)
-            resized.recycle()
+            try {
+                val safeBmp = if (bitmap.config == null || bitmap.colorSpace == null) {
+                    bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return classifyHeuristic(bitmap, faceData)
+                } else bitmap
+                val resized = Bitmap.createScaledBitmap(safeBmp, inputSize, inputSize, true)
+                if (safeBmp !== bitmap) safeBmp.recycle()
+                val inputBuffer = bitmapToByteBuffer(resized)
+                resized.recycle()
 
-            val outputArray = Array(1) { FloatArray(labelMap.size) }
-            interp.run(inputBuffer, outputArray)
+                val outputArray = Array(1) { FloatArray(labelMap.size) }
+                interp.run(inputBuffer, outputArray)
 
-            val scores = applySoftmax(outputArray[0])
-            val maxIndex = scores.indices.maxByOrNull { scores[it] } ?: 0
-            val confidence = scores[maxIndex]
-            val sceneType = if (maxIndex < labelMap.size) labelMap[maxIndex] else SceneType.UNKNOWN
-            return Pair(sceneType, confidence)
+                val scores = applySoftmax(outputArray[0])
+                val maxIndex = scores.indices.maxByOrNull { scores[it] } ?: 0
+                val confidence = scores[maxIndex]
+                val sceneType = if (maxIndex < labelMap.size) labelMap[maxIndex] else SceneType.UNKNOWN
+                return Pair(sceneType, confidence)
+            } catch (e: Exception) {
+                Log.w("SceneClassifier", "TFLite inference failed, disabling model", e)
+                interpreter?.close()
+                interpreter = null
+            }
         }
 
         return classifyHeuristic(bitmap, faceData)

@@ -19,7 +19,7 @@ import android.graphics.Bitmap
  */
 class FocusPeakingProcessor(
     private val peakColor: Int = 0xFFFF0000.toInt(),
-    private val threshold: Int = 25,
+    private val threshold: Int = 80,
     private val downscaleFactor: Int = 4
 ) {
 
@@ -68,7 +68,7 @@ class FocusPeakingProcessor(
 
                 if (laplacian > threshold) {
                     // Scale alpha by edge strength for a softer overlay
-                    val alpha = (laplacian * 3).coerceAtMost(255)
+                    val alpha = ((laplacian - threshold) * 2).coerceAtMost(200)
                     // Combine alpha with the peak color (replace the color's alpha channel)
                     overlay[rowOffset + x] = (alpha shl 24) or (peakColor and 0x00FFFFFF)
                 }
