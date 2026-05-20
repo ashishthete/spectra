@@ -8,12 +8,14 @@ data class ProcessingParams(
     val hdrStrength: Int = 50,
     val skinToneProcessing: Int = 0,
     val highlightProtection: Int = 50,
-    val shadowRecovery: Int = 50
+    val shadowRecovery: Int = 50,
+    /** LUT name for color grading, e.g. "CINEMATIC", "VIVID", "MOODY", "FILM". Null = no LUT. */
+    val colorGradingLut: String? = null
 ) {
     companion object {
         val NATURAL = ProcessingParams()
-        val VIVID = ProcessingParams(contrast = 60, saturation = 65, sharpness = 55)
+        val VIVID = ProcessingParams(contrast = 60, saturation = 65, sharpness = 55, colorGradingLut = "VIVID")
         val SOFT = ProcessingParams(contrast = 40, saturation = 45, sharpness = 40)
-        val CINEMATIC = ProcessingParams(contrast = 55, saturation = 40, sharpness = 35, highlightProtection = 65)
+        val CINEMATIC = ProcessingParams(contrast = 55, saturation = 40, sharpness = 35, highlightProtection = 65, colorGradingLut = "CINEMATIC")
     }
 }
