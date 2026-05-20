@@ -4,7 +4,7 @@ data class HudState(
     val activeLens: LensId = LensId.MAIN,
     val settings: CameraSettings = CameraSettings(),
     val mode: CameraMode = CameraMode.PHOTO,
-    val preset: CameraPreset = CameraPreset.PORTRAIT,
+    val preset: CameraPreset = CameraPreset.AUTO,
     val processing: ProcessingParams = ProcessingParams(),
     val isHudVisible: Boolean = true,
 
@@ -58,6 +58,7 @@ data class HudState(
     val actualShutterSpeedNs: Long = 0L,
     val actualFocusDistance: Float = 0f,
     val actualColorTemperature: Int = 0,
+    val estimatedLux: Float = -1f,
 
     val timerCountdown: Int = 0,
     val showCaptureFlash: Boolean = false,
@@ -95,12 +96,36 @@ data class HudState(
     val zebraThreshold: Int = 235,
     val gridMode: GridMode = GridMode.THIRDS,
     val focusPeakingData: IntArray? = null,
+    val peakingWidth: Int = 0,
+    val peakingHeight: Int = 0,
     val zebraData: IntArray? = null,
     val analysisWidth: Int = 0,
     val analysisHeight: Int = 0,
 
     val captureExplanation: CaptureExplanation? = null,
     val showAiExplainer: Boolean = false,
+
+    val userTier: UserTier = UserTier.EVERYDAY,
+    val focusConfidence: Float = 1f,
+    val eyeFocusActive: Boolean = false,
+
+    val falseColorEnabled: Boolean = false,
+    val falseColorData: IntArray? = null,
+    val waveformData: IntArray? = null,
+
+    val videoExposureSmoothing: Boolean = true,
+    val videoStabilizationWarning: Boolean = false,
+    val videoFocusTracking: Boolean = false,
+
+    val lookParams: LookParams = LookParams(),
+    val captureRecipe: CaptureRecipe? = null,
+
+    val isHighlightClipped: Boolean = false,
+    val isShadowClipped: Boolean = false,
+    val highlightClipFraction: Float = 0f,
+    val shadowClipFraction: Float = 0f,
+
+    val cropSuggestions: List<CropSuggestionData> = emptyList(),
 ) {
     val isLowLight: Boolean get() = actualIso > 800 || actualShutterSpeedNs > 33_000_000L
 

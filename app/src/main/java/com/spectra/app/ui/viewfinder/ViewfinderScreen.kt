@@ -60,6 +60,8 @@ import com.spectra.app.ui.hud.MiniHistogram
 import com.spectra.app.ui.hud.ReviewOverlay
 import com.spectra.app.ui.hud.SmartReviewOverlay
 import com.spectra.app.ui.review.AiExplainerOverlay
+import com.spectra.app.ui.hud.FalseColorOverlay
+import com.spectra.app.ui.hud.WaveformOverlay
 import com.spectra.app.ui.hud.ZebraOverlay
 import com.spectra.app.ui.pro.ProModePanel
 import com.spectra.app.ui.theme.HudColors
@@ -89,6 +91,12 @@ fun ViewfinderScreen(
         }
     }
 
+    LaunchedEffect(Unit) {
+        viewModel.captureHaptic.collect {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -96,6 +104,15 @@ fun ViewfinderScreen(
     ) {
         val previewStyle = hudState.photoStyle
         val previewFront = hudState.isFrontCamera
+        val previewLook = hudState.lookParams
+        class EffectCache {
+            var colorHash = 0
+            var colorFilter: ColorMatrixColorFilter? = null
+            var effectHash = 0
+            var renderEffect: android.graphics.RenderEffect? = null
+        }
+        val effectCache = remember { EffectCache() }
+
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).also { previewView ->
@@ -104,16 +121,49 @@ fun ViewfinderScreen(
                 }
             },
             update = { previewView ->
-                val matrix = buildPreviewMatrix(previewStyle, previewFront)
-                if (matrix != null) {
-                    val androidMatrix = AndroidColorMatrix(matrix.values)
+                val colorHash = arrayOf(previewStyle, previewFront, previewLook).contentHashCode()
+                if (colorHash != effectCache.colorHash) {
+                    val matrix = buildPreviewMatrix(previewStyle, previewFront, previewLook)
+                    effectCache.colorFilter = if (matrix != null) ColorMatrixColorFilter(AndroidColorMatrix(matrix.values)) else null
+                    effectCache.colorHash = colorHash
+                }
+
+                if (effectCache.colorFilter != null) {
                     previewView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
                     previewView.setLayerPaint(android.graphics.Paint().apply {
-                        colorFilter = ColorMatrixColorFilter(androidMatrix)
+                        colorFilter = effectCache.colorFilter
                     })
                 } else {
                     previewView.setLayerPaint(null)
                 }
+
+                val viewWidth = previewView.width.toFloat().coerceAtLeast(1f)
+                val viewHeight = previewView.height.toFloat().coerceAtLeast(1f)
+                val effectHash = arrayOf(
+                    previewStyle, hudState.sceneContrast, hudState.focusPeakingEnabled,
+                    hudState.zebraEnabled, hudState.zebraThreshold, viewWidth, viewHeight
+                ).contentHashCode()
+
+                if (effectHash != effectCache.effectHash || (viewWidth > 1f && effectCache.effectHash == 0)) {
+                    var effect = com.spectra.camera.gpu.PreviewEffect.create(
+                        previewStyle, hudState.sceneContrast
+                    )
+                    val proEffect = com.spectra.camera.gpu.ProOverlayShaders.createCombinedEffect(
+                        width = viewWidth,
+                        height = viewHeight,
+                        peakingEnabled = hudState.focusPeakingEnabled,
+                        zebraEnabled = hudState.zebraEnabled,
+                        zebraThreshold = hudState.zebraThreshold
+                    )
+                    effectCache.renderEffect = when {
+                        effect != null && proEffect != null ->
+                            android.graphics.RenderEffect.createChainEffect(proEffect, effect)
+                        proEffect != null -> proEffect
+                        else -> effect
+                    }
+                    effectCache.effectHash = effectHash
+                }
+                previewView.setRenderEffect(effectCache.renderEffect)
             },
             modifier = Modifier
                 .fillMaxSize()
@@ -148,8 +198,8 @@ fun ViewfinderScreen(
         if (hudState.focusPeakingEnabled && hudState.focusPeakingData != null) {
             FocusPeakingOverlay(
                 edgeData = hudState.focusPeakingData,
-                width = hudState.analysisWidth,
-                height = hudState.analysisHeight
+                width = hudState.peakingWidth,
+                height = hudState.peakingHeight
             )
         }
 
@@ -158,6 +208,23 @@ fun ViewfinderScreen(
                 zebraData = hudState.zebraData,
                 width = hudState.analysisWidth,
                 height = hudState.analysisHeight
+            )
+        }
+
+        if (hudState.falseColorEnabled && hudState.falseColorData != null) {
+            FalseColorOverlay(
+                falseColorData = hudState.falseColorData,
+                width = hudState.analysisWidth,
+                height = hudState.analysisHeight
+            )
+        }
+
+        if (hudState.falseColorEnabled && hudState.waveformData != null) {
+            WaveformOverlay(
+                waveformData = hudState.waveformData,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 8.dp, bottom = 240.dp)
             )
         }
 
@@ -171,13 +238,59 @@ fun ViewfinderScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
                 Text(
-                    text = "Selecting best shot...",
+                    text = "Capturing...",
                     color = HudColors.accent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     fontFamily = FontFamily.Monospace
                 )
             }
+        }
+
+        AnimatedVisibility(
+            visible = hudState.isHighlightClipped && !hudState.isCapturing && !hudState.showSmartReview,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 12.dp, top = 70.dp)
+        ) {
+            Text(
+                text = "HIGHLIGHTS CLIPPED ${"%.0f".format(hudState.highlightClipFraction * 100)}%",
+                color = androidx.compose.ui.graphics.Color(0xFFFF4444),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .background(
+                        androidx.compose.ui.graphics.Color(0x88000000),
+                        RoundedCornerShape(4.dp)
+                    )
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+        }
+
+        AnimatedVisibility(
+            visible = hudState.isShadowClipped && !hudState.isCapturing && !hudState.showSmartReview,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 12.dp, top = 90.dp)
+        ) {
+            Text(
+                text = "SHADOWS CLIPPED ${"%.0f".format(hudState.shadowClipFraction * 100)}%",
+                color = androidx.compose.ui.graphics.Color(0xFF4488FF),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier
+                    .background(
+                        androidx.compose.ui.graphics.Color(0x88000000),
+                        RoundedCornerShape(4.dp)
+                    )
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
         }
 
         HudOverlay(
@@ -191,9 +304,11 @@ fun ViewfinderScreen(
             flashMode = hudState.flashMode,
             timerSeconds = hudState.timerSeconds,
             aspectRatio = hudState.aspectRatio,
+            megapixels = hudState.cameraMegapixels,
             onFlashToggle = { viewModel.toggleFlash() },
             onTimerToggle = { viewModel.toggleTimer() },
             onAspectToggle = { viewModel.toggleAspectRatio() },
+            onMegapixelToggle = { viewModel.cycleMegapixels() },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 12.dp)
@@ -267,6 +382,7 @@ fun ViewfinderScreen(
             isManualOverride = hudState.isManualOverride,
             focusPeakingEnabled = hudState.focusPeakingEnabled,
             zebraEnabled = hudState.zebraEnabled,
+            falseColorEnabled = hudState.falseColorEnabled,
             rawEnabled = hudState.settings.captureRaw,
             zebraThreshold = hudState.zebraThreshold,
             gridLabel = hudState.gridMode.label,
@@ -278,6 +394,7 @@ fun ViewfinderScreen(
             onSnapToAi = { viewModel.snapToAiRecommendation() },
             onToggleFocusPeaking = { viewModel.toggleFocusPeaking() },
             onToggleZebra = { viewModel.toggleZebra() },
+            onToggleFalseColor = { viewModel.toggleFalseColor() },
             onToggleRaw = { viewModel.toggleRaw() },
             onCycleZebraThreshold = { viewModel.cycleZebraThreshold() },
             onCycleGrid = { viewModel.cycleGridMode() },
@@ -434,21 +551,28 @@ fun ViewfinderScreen(
             onSaveOriginal = { viewModel.saveOriginalOnly() },
             onSaveEnhanced = { viewModel.saveEnhancedOnly() },
             onSaveBoth = { viewModel.saveBoth() },
-            onDiscard = { viewModel.discardSmartCapture() }
+            onDiscard = { viewModel.discardSmartCapture() },
+            cropSuggestions = hudState.cropSuggestions
         )
     }
 }
 
-private fun buildPreviewMatrix(style: PhotoStyle, isFrontCamera: Boolean): ColorMatrix? {
+private fun buildPreviewMatrix(
+    style: PhotoStyle,
+    isFrontCamera: Boolean,
+    look: com.spectra.core.model.LookParams = com.spectra.core.model.LookParams()
+): ColorMatrix? {
     val combined = AndroidColorMatrix()
 
+    val contrastScale = 1f + look.contrastStrength * 0.15f
+    val brightnessOffset = -look.contrastStrength * 20f + look.shadowLift * 15f
     val enhance = AndroidColorMatrix(floatArrayOf(
-        1.03f, 0f, 0f, 0f, -4f,
-        0f, 1.03f, 0f, 0f, -4f,
-        0f, 0f, 1.03f, 0f, -4f,
+        contrastScale, 0f, 0f, 0f, brightnessOffset,
+        0f, contrastScale, 0f, 0f, brightnessOffset,
+        0f, 0f, contrastScale, 0f, brightnessOffset,
         0f, 0f, 0f, 1f, 0f
     ))
-    val satBoost = AndroidColorMatrix().apply { setSaturation(1.05f) }
+    val satBoost = AndroidColorMatrix().apply { setSaturation(look.saturationScale) }
     enhance.postConcat(satBoost)
     combined.postConcat(enhance)
 
@@ -499,6 +623,16 @@ private fun buildPreviewMatrix(style: PhotoStyle, isFrontCamera: Boolean): Color
             combined.postConcat(sat)
         }
         PhotoStyle.NATURAL -> { }
+    }
+
+    if (look.highlightShoulder > 0f) {
+        val compress = 1f - look.highlightShoulder * 0.08f
+        combined.postConcat(AndroidColorMatrix(floatArrayOf(
+            compress, 0f, 0f, 0f, 0f,
+            0f, compress, 0f, 0f, 0f,
+            0f, 0f, compress, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f
+        )))
     }
 
     return ColorMatrix(combined.array)

@@ -20,19 +20,8 @@ fun ZebraOverlay(
 
     val zebraBitmap = remember(zebraData, width, height) {
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(width * height)
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val i = y * width + x
-                if (zebraData[i] > 0) {
-                    val stripe = ((x + y) / 4) % 2 == 0
-                    pixels[i] = if (stripe) 0x80FF0000.toInt() else 0x40FF0000.toInt()
-                } else {
-                    pixels[i] = 0
-                }
-            }
-        }
-        bmp.setPixels(pixels, 0, width, 0, 0, width, height)
+        // zebraData already contains pre-rendered ARGB pixels from ZebraProcessor
+        bmp.setPixels(zebraData, 0, width, 0, 0, width, height)
         bmp
     }
 

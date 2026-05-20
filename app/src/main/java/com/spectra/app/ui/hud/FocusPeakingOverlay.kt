@@ -7,9 +7,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.IntSize
 
+/**
+ * Renders a focus-peaking overlay on top of the camera preview.
+ *
+ * [edgeData] is an IntArray of pre-rendered ARGB pixels produced by
+ * [com.spectra.camera.FocusPeakingProcessor]. In-focus edges are colored
+ * (with alpha), and everything else is transparent (0x00000000).
+ * The overlay is stretched to fill the available space.
+ */
 @Composable
 fun FocusPeakingOverlay(
     edgeData: IntArray?,
@@ -18,20 +25,11 @@ fun FocusPeakingOverlay(
     modifier: Modifier = Modifier
 ) {
     if (edgeData == null || width <= 0 || height <= 0) return
+    if (edgeData.size != width * height) return
 
     val peakBitmap = remember(edgeData, width, height) {
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(width * height)
-        for (i in edgeData.indices) {
-            val edge = edgeData[i]
-            pixels[i] = if (edge > 30) {
-                val alpha = (edge * 3).coerceAtMost(200)
-                (alpha shl 24) or 0x00FF00
-            } else {
-                0
-            }
-        }
-        bmp.setPixels(pixels, 0, width, 0, 0, width, height)
+        bmp.setPixels(edgeData, 0, width, 0, 0, width, height)
         bmp
     }
 
