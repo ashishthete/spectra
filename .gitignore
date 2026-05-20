@@ -13,3 +13,11 @@ build/
 *.class
 *.log
 .superpowers/
+
+# Release signing
+keystore.properties
+*.keystore
+*.jks
+play-store-key.json
+fastlane/report.xml
+fastlane/README.md
