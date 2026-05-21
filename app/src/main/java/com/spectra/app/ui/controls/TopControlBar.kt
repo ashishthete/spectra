@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
 import androidx.compose.material.icons.filled.Timer
@@ -38,11 +39,13 @@ fun TopControlBar(
     aspectRatio: AspectRatio,
     megapixels: Int = 12,
     palmGestureEnabled: Boolean = false,
+    aiCoachingEnabled: Boolean = false,
     onFlashToggle: () -> Unit,
     onTimerToggle: () -> Unit,
     onAspectToggle: () -> Unit,
     onMegapixelToggle: () -> Unit = {},
     onPalmGestureToggle: () -> Unit = {},
+    onAiSettingsClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -95,6 +98,13 @@ fun TopControlBar(
             contentDescription = "Palm gesture",
             isActive = palmGestureEnabled,
             onClick = onPalmGestureToggle
+        )
+
+        TopIconButton(
+            icon = Icons.Filled.AutoAwesome,
+            contentDescription = "AI coaching settings",
+            isActive = aiCoachingEnabled,
+            onClick = onAiSettingsClick
         )
     }
 }

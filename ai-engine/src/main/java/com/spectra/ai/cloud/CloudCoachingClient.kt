@@ -35,35 +35,83 @@ class CloudCoachingClient @Inject constructor() : CloudCoachingClientInterface {
         }
     }
 
-    private var apiKey: String? = null
+    private var config: AiProviderConfig = AiProviderConfig()
 
-    fun setApiKey(key: String) {
-        apiKey = key
+    fun configure(newConfig: AiProviderConfig) {
+        config = newConfig
     }
+
+    fun isEnabled(): Boolean = config.enabled && config.isConfigured
 
     override suspend fun analyzeFrame(
         bitmap: Bitmap,
         sceneLabel: String,
         lightingLabel: String
     ): CoachingHint? {
-        val key = apiKey ?: return null
+        if (!isEnabled()) return null
 
         val base64 = bitmapToBase64(bitmap)
-        val request = buildRequest(base64, sceneLabel, lightingLabel)
+        val prompt = buildPrompt(sceneLabel, lightingLabel)
 
         return try {
-            val response: VisionResponse = httpClient.post("https://api.anthropic.com/v1/messages") {
-                header("x-api-key", key)
-                header("anthropic-version", "2023-06-01")
-                contentType(ContentType.Application.Json)
-                setBody(request)
-            }.body()
-
-            val text = response.content.firstOrNull { it.type == "text" }?.text ?: return null
-            parseResponseText(text).firstOrNull()
+            val text = when (config.provider) {
+                AiProvider.ANTHROPIC -> queryAnthropic(base64, prompt)
+                AiProvider.OPENAI -> queryOpenAi(base64, prompt, config.effectiveBaseUrl)
+                AiProvider.GEMINI -> queryGemini(base64, prompt)
+                AiProvider.OPENAI_COMPATIBLE -> queryOpenAi(base64, prompt, config.effectiveBaseUrl)
+            }
+            if (text != null) parseResponseText(text).firstOrNull() else null
         } catch (_: Exception) {
             null
         }
+    }
+
+    private suspend fun queryAnthropic(base64: String, prompt: String): String? {
+        val response: AnthropicResponse = httpClient.post("${config.effectiveBaseUrl}/v1/messages") {
+            header("x-api-key", config.apiKey)
+            header("anthropic-version", "2023-06-01")
+            contentType(ContentType.Application.Json)
+            setBody(AnthropicRequest(
+                model = config.effectiveModel,
+                messages = listOf(AnthropicMessage(content = listOf(
+                    AnthropicContent(type = "image", source = AnthropicImageSource(data = base64)),
+                    AnthropicContent(type = "text", text = prompt)
+                )))
+            ))
+        }.body()
+        return response.content.firstOrNull { it.type == "text" }?.text
+    }
+
+    private suspend fun queryOpenAi(base64: String, prompt: String, baseUrl: String): String? {
+        val response: OpenAiResponse = httpClient.post("$baseUrl/v1/chat/completions") {
+            header("Authorization", "Bearer ${config.apiKey}")
+            contentType(ContentType.Application.Json)
+            setBody(OpenAiRequest(
+                model = config.effectiveModel,
+                messages = listOf(OpenAiMessage(content = listOf(
+                    OpenAiContent(
+                        type = "image_url",
+                        imageUrl = OpenAiImageUrl(url = "data:image/jpeg;base64,$base64")
+                    ),
+                    OpenAiContent(type = "text", text = prompt)
+                )))
+            ))
+        }.body()
+        return response.choices.firstOrNull()?.message?.content
+    }
+
+    private suspend fun queryGemini(base64: String, prompt: String): String? {
+        val url = "${config.effectiveBaseUrl}/v1beta/models/${config.effectiveModel}:generateContent?key=${config.apiKey}"
+        val response: GeminiResponse = httpClient.post(url) {
+            contentType(ContentType.Application.Json)
+            setBody(GeminiRequest(
+                contents = listOf(GeminiContent(parts = listOf(
+                    GeminiPart(inlineData = GeminiInlineData(data = base64)),
+                    GeminiPart(text = prompt)
+                )))
+            ))
+        }.body()
+        return response.candidates.firstOrNull()?.content?.parts?.firstOrNull()?.text
     }
 
     private fun bitmapToBase64(bitmap: Bitmap): String {
@@ -86,25 +134,6 @@ class CloudCoachingClient @Inject constructor() : CloudCoachingClientInterface {
                 "Examples: TILT UP 10° · GOLDEN RATIO ALIGN, " +
                 "STEP LEFT 0.5M · LEADING LINES. " +
                 "Be specific and actionable. Each directive should be under 50 characters."
-        }
-
-        fun buildRequest(base64Image: String, sceneLabel: String, lightingLabel: String): VisionRequest {
-            return VisionRequest(
-                messages = listOf(
-                    VisionMessage(
-                        content = listOf(
-                            VisionContent(
-                                type = "image",
-                                source = ImageSource(data = base64Image)
-                            ),
-                            VisionContent(
-                                type = "text",
-                                text = buildPrompt(sceneLabel, lightingLabel)
-                            )
-                        )
-                    )
-                )
-            )
         }
 
         fun parseResponseText(text: String): List<CoachingHint> {

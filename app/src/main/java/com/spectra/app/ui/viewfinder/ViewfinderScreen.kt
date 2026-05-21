@@ -48,6 +48,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.spectra.core.model.PhotoStyle
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.spectra.ai.cloud.AiProviderConfig
 import com.spectra.app.ui.controls.BeautyToggle
 import com.spectra.app.ui.controls.CaptureControls
 import com.spectra.app.ui.controls.ModeSelector
@@ -58,6 +59,7 @@ import com.spectra.app.ui.hud.AspectRatioOverlay
 import com.spectra.app.ui.hud.BeautyOverlay
 import com.spectra.app.ui.hud.CaptureFlash
 import com.spectra.app.ui.hud.FocusPeakingOverlay
+import com.spectra.app.ui.settings.AiSettingsSheet
 import com.spectra.app.ui.hud.HudOverlay
 import com.spectra.app.ui.hud.MiniHistogram
 import com.spectra.app.ui.hud.ReviewOverlay
@@ -80,6 +82,7 @@ fun ViewfinderScreen(
     val currentTip by viewModel.currentTip.collectAsState()
     val cameraReady by viewModel.cameraController.isReady.collectAsState()
     val captureInProgress by viewModel.captureInProgress.collectAsState()
+    val aiConfig by viewModel.aiProviderConfig.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -278,11 +281,13 @@ fun ViewfinderScreen(
             aspectRatio = hudState.aspectRatio,
             megapixels = hudState.cameraMegapixels,
             palmGestureEnabled = hudState.palmGestureEnabled,
+            aiCoachingEnabled = hudState.aiCoachingEnabled,
             onFlashToggle = { viewModel.toggleFlash() },
             onTimerToggle = { viewModel.toggleTimer() },
             onAspectToggle = { viewModel.toggleAspectRatio() },
             onMegapixelToggle = { viewModel.cycleMegapixels() },
             onPalmGestureToggle = { viewModel.togglePalmGesture() },
+            onAiSettingsClick = { viewModel.toggleAiSettings() },
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 12.dp)
@@ -571,6 +576,19 @@ fun ViewfinderScreen(
             onQuickSave = { viewModel.quickSave() },
             cropSuggestions = hudState.cropSuggestions
         )
+
+        AnimatedVisibility(
+            visible = hudState.showAiSettings,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            AiSettingsSheet(
+                config = aiConfig,
+                onConfigChanged = { viewModel.updateAiConfig(it) },
+                onDismiss = { viewModel.toggleAiSettings() }
+            )
+        }
     }
 }
 

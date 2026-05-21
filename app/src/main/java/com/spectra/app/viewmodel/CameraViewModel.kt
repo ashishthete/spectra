@@ -6,6 +6,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.spectra.ai.FrameAnalysisPipeline
 import com.spectra.ai.PalmGestureDetector
+import com.spectra.ai.cloud.AiProviderConfig
+import com.spectra.ai.cloud.CloudCoachingClient
 import com.spectra.ai.model.PhotoTip
 import com.spectra.ai.tips.TipsRepository
 import com.spectra.app.settings.SettingsStore
@@ -56,7 +58,8 @@ class CameraViewModel @Inject constructor(
     private val levelSensor: LevelSensor,
     private val locationProvider: LocationProvider,
     private val thermalPolicy: ThermalPolicy,
-    private val palmGestureDetector: PalmGestureDetector
+    private val palmGestureDetector: PalmGestureDetector,
+    private val cloudCoachingClient: CloudCoachingClient
 ) : ViewModel() {
 
     private val _hudState = MutableStateFlow(HudState())
@@ -64,6 +67,9 @@ class CameraViewModel @Inject constructor(
 
     private val _captureInProgress = MutableStateFlow(false)
     val captureInProgress: StateFlow<Boolean> = _captureInProgress.asStateFlow()
+
+    private val _aiProviderConfig = MutableStateFlow(AiProviderConfig())
+    val aiProviderConfig: StateFlow<AiProviderConfig> = _aiProviderConfig.asStateFlow()
 
     private val _currentTip = MutableStateFlow<PhotoTip?>(null)
     val currentTip: StateFlow<PhotoTip?> = _currentTip.asStateFlow()
@@ -115,11 +121,15 @@ class CameraViewModel @Inject constructor(
             val mode = settingsStore.loadMode()
             val beauty = settingsStore.loadBeautyLevel()
             val proSettings = settingsStore.loadProSettings()
+            val aiConfig = settingsStore.loadAiConfig()
+            cloudCoachingClient.configure(aiConfig)
+            _aiProviderConfig.value = aiConfig
             _hudState.update { it.copy(
                 mode = mode,
                 beautyLevel = beauty,
                 settings = proSettings,
-                aiRecommendedSettings = proSettings
+                aiRecommendedSettings = proSettings,
+                aiCoachingEnabled = aiConfig.enabled && aiConfig.isConfigured
             )}
         }
 
@@ -1482,6 +1492,17 @@ class CameraViewModel @Inject constructor(
         cameraController.setManualFocusDistance(0f) // restore auto
     }
 
+    fun toggleAiSettings() {
+        _hudState.update { it.copy(showAiSettings = !it.showAiSettings) }
+    }
+
+    fun updateAiConfig(config: AiProviderConfig) {
+        cloudCoachingClient.configure(config)
+        _aiProviderConfig.value = config
+        _hudState.update { it.copy(aiCoachingEnabled = config.enabled && config.isConfigured) }
+        viewModelScope.launch { settingsStore.saveAiConfig(config) }
+    }
+
     fun toggleFocusPeaking() {
         _hudState.update { it.copy(focusPeakingEnabled = !it.focusPeakingEnabled) }
     }
@@ -1718,5 +1739,6 @@ class CameraViewModel @Inject constructor(
         captureManager.releaseDepthModel()
         captureManager.releaseNeuralDenoiser()
         captureManager.releaseGpu()
+        cloudCoachingClient.release()
     }
 }
