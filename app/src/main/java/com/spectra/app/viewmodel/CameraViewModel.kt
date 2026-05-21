@@ -1381,6 +1381,12 @@ class CameraViewModel @Inject constructor(
         cameraController.ensureVideoBound()
         val started = cameraController.startRecording()
         if (started) {
+            try {
+                val serviceIntent = android.content.Intent(context, com.spectra.app.RecordingService::class.java)
+                context.startForegroundService(serviceIntent)
+            } catch (e: Exception) {
+                Log.w("CameraViewModel", "Could not start recording service", e)
+            }
             recordingStartTimeMs = System.currentTimeMillis()
             _hudState.update { it.copy(isRecording = true, recordingDurationMs = 0L) }
             recordingTimerJob = viewModelScope.launch {
@@ -1418,6 +1424,9 @@ class CameraViewModel @Inject constructor(
     fun stopRecording() {
         recordingTimerJob?.cancel()
         cameraController.stopRecording()
+        try {
+            context.stopService(android.content.Intent(context, com.spectra.app.RecordingService::class.java))
+        } catch (_: Exception) {}
     }
 
     fun toggleRecording() {
